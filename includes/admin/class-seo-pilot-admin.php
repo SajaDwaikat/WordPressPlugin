@@ -189,6 +189,59 @@ final class SEO_Pilot_Admin {
                     </table>
                 </div>
                 <div class="seo-pilot-panel">
+                    <h2><?php esc_html_e( 'Images', 'seo-pilot' ); ?></h2>
+                    <p><?php esc_html_e( 'Optional. SEO Pilot can ask a vision-capable AI model for draft alt text. This is separate from sending text: when you press "Draft alt text with AI" in the workspace, up to 5 images from that one page are resized to at most 1024 px and sent to the provider above, together with the page title, the heading each image sits under, its caption and link text. Your keywords are not sent. Only images from your own Media Library uploads are ever read. The model you chose must accept images; many text-only models do not.', 'seo-pilot' ); ?></p>
+                    <table class="form-table" role="presentation">
+                        <tr><th scope="row"><?php esc_html_e( 'Allow sending images', 'seo-pilot' ); ?></th>
+                            <td><label><input type="checkbox" name="<?php echo esc_attr( $name ); ?>[send_images]" value="1" <?php checked( ! empty( $s['send_images'] ) ); ?>> <?php esc_html_e( 'Enable AI drafts for image alt text', 'seo-pilot' ); ?></label></td></tr>
+                        <tr><th scope="row"><?php esc_html_e( 'Confirmation', 'seo-pilot' ); ?></th>
+                            <td><label><input type="checkbox" name="<?php echo esc_attr( $name ); ?>[ack_images]" value="1" <?php checked( ! empty( $s['ack_images'] ) ); ?>> <?php esc_html_e( 'I understand my images are sent to this AI provider, and I have the right to share them (including any people shown).', 'seo-pilot' ); ?></label>
+                            <?php if ( ! empty( $s['ack_images_time'] ) ) : $u2 = get_userdata( (int) $s['ack_images_user'] ); ?>
+                                <p class="description"><?php echo esc_html( sprintf( 'Confirmed by %1$s on %2$s.', $u2 ? $u2->display_name : '#' . (int) $s['ack_images_user'], $s['ack_images_time'] ) ); ?></p>
+                            <?php endif; ?></td></tr>
+                    </table>
+                </div>
+                <?php
+                $lang_plugins = SEO_Pilot_Lang::plugins();
+                $lang_rows    = array_values( $s['languages'] );
+                $lang_target  = min( 12, max( 3, count( $lang_rows ) + 2 ) );
+                while ( count( $lang_rows ) < $lang_target ) { $lang_rows[] = array( 'code' => '', 'label' => '', 'note' => '' ); }
+                ?>
+                <div class="seo-pilot-panel">
+                    <h2><?php esc_html_e( 'Languages (multilingual sites)', 'seo-pilot' ); ?></h2>
+                    <?php if ( $lang_plugins ) : ?>
+                        <div class="notice notice-info inline"><p><?php echo esc_html( sprintf( 'Detected: %s. Translations and hreflang tags are managed by that plugin, so SEO Pilot only reads them and checks the result. The table below still sets display names, the default language and wording notes for the AI. SEO Pilot will not print hreflang tags while such a plugin is active.', implode( ', ', array_map( array( 'SEO_Pilot_Lang', 'plugin_label' ), $lang_plugins ) ) ) ); ?></p></div>
+                    <?php endif; ?>
+                    <p><?php esc_html_e( 'List the languages your site uses. If you link translated pages yourself (no translation plugin), set each page\'s language and its translations in the page\'s Language panel; SEO Pilot can then print correct hreflang tags. Use language codes such as ar, en, fr or ar-SA.', 'seo-pilot' ); ?></p>
+                    <table class="widefat striped seo-pilot-langtable">
+                        <thead><tr>
+                            <th scope="col"><?php esc_html_e( 'Code', 'seo-pilot' ); ?></th>
+                            <th scope="col"><?php esc_html_e( 'Name', 'seo-pilot' ); ?></th>
+                            <th scope="col"><?php esc_html_e( 'Regional wording note for the AI (optional)', 'seo-pilot' ); ?></th>
+                            <th scope="col"><?php esc_html_e( 'Default', 'seo-pilot' ); ?></th>
+                        </tr></thead>
+                        <tbody>
+                        <?php foreach ( $lang_rows as $i => $row ) : ?>
+                            <tr>
+                                <td><input type="text" class="small-text" dir="ltr" maxlength="12" name="<?php echo esc_attr( $name ); ?>[languages][<?php echo (int) $i; ?>][code]" value="<?php echo esc_attr( $row['code'] ); ?>" aria-label="<?php esc_attr_e( 'Language code', 'seo-pilot' ); ?>"></td>
+                                <td><input type="text" class="regular-text" dir="auto" maxlength="60" name="<?php echo esc_attr( $name ); ?>[languages][<?php echo (int) $i; ?>][label]" value="<?php echo esc_attr( $row['label'] ); ?>" aria-label="<?php esc_attr_e( 'Language name', 'seo-pilot' ); ?>"></td>
+                                <td><input type="text" class="large-text" dir="auto" maxlength="200" name="<?php echo esc_attr( $name ); ?>[languages][<?php echo (int) $i; ?>][note]" value="<?php echo esc_attr( $row['note'] ); ?>" placeholder="<?php esc_attr_e( 'e.g. Modern Standard Arabic for a Gulf audience', 'seo-pilot' ); ?>" aria-label="<?php esc_attr_e( 'Regional wording note', 'seo-pilot' ); ?>"></td>
+                                <td><?php if ( '' !== $row['code'] ) : ?><input type="radio" name="<?php echo esc_attr( $name ); ?>[default_lang]" value="<?php echo esc_attr( $row['code'] ); ?>" <?php checked( $s['default_lang'], $row['code'] ); ?> aria-label="<?php esc_attr_e( 'Default language', 'seo-pilot' ); ?>"><?php endif; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <p class="description"><?php esc_html_e( 'The default language gets the x-default hreflang entry. Leave all unselected for none.', 'seo-pilot' ); ?></p>
+                    <table class="form-table" role="presentation">
+                        <tr><th scope="row"><?php esc_html_e( 'hreflang tags', 'seo-pilot' ); ?></th>
+                            <td><label><input type="checkbox" name="<?php echo esc_attr( $name ); ?>[hreflang_output]" value="1" <?php checked( ! empty( $s['hreflang_output'] ) ); disabled( (bool) $lang_plugins ); ?>> <?php esc_html_e( 'Print hreflang tags for pages that are linked as translations in SEO Pilot', 'seo-pilot' ); ?></label>
+                            <p class="description"><?php esc_html_e( 'Off by default. Every page in a group lists itself and all the others, so the tags always point back at each other; drafts and noindex pages are left out. Use "Check live output" afterwards, and turn this off if another plugin or your theme already prints hreflang.', 'seo-pilot' ); ?></p></td></tr>
+                        <tr><th scope="row"><?php esc_html_e( 'Page language attribute', 'seo-pilot' ); ?></th>
+                            <td><label><input type="checkbox" name="<?php echo esc_attr( $name ); ?>[html_lang]" value="1" <?php checked( ! empty( $s['html_lang'] ) ); disabled( (bool) $lang_plugins ); ?>> <?php esc_html_e( 'Set the lang attribute of the page to the language chosen in SEO Pilot', 'seo-pilot' ); ?></label>
+                            <p class="description"><?php esc_html_e( 'WordPress prints one site-wide language. Tick this if you publish pages in several languages without a translation plugin. Text direction is not changed.', 'seo-pilot' ); ?></p></td></tr>
+                    </table>
+                </div>
+                <div class="seo-pilot-panel">
                     <h2><?php esc_html_e( 'Data', 'seo-pilot' ); ?></h2>
                     <label><input type="checkbox" name="<?php echo esc_attr( $name ); ?>[delete_on_uninstall]" value="1" <?php checked( ! empty( $s['delete_on_uninstall'] ) ); ?>> <?php esc_html_e( 'Delete all SEO Pilot data when the plugin is deleted: recommendations, history, keywords, settings, and the SEO titles and meta descriptions that SEO Pilot itself stores.', 'seo-pilot' ); ?></label>
                     <p class="description"><?php esc_html_e( 'Off by default so the audit history survives re-installing the plugin.', 'seo-pilot' ); ?></p>

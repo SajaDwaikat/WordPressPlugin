@@ -19,6 +19,7 @@ final class SEO_Pilot_Report {
             'verify'    => 'Factual verification flags',
             'index'     => 'Indexability',
             'images'    => 'Images and alt text',
+            'language'  => 'Language and translations',
         );
     }
 
@@ -30,7 +31,7 @@ final class SEO_Pilot_Report {
             'h1' => 'structure', 'heading_order' => 'structure', 'subheadings' => 'structure',
         );
         if ( isset( $by_id[ $row['id'] ] ) ) { return $by_id[ $row['id'] ]; }
-        $by_group = array( 'meta' => 'meta', 'structure' => 'structure', 'content' => 'content', 'readability' => 'readable', 'links' => 'links', 'images' => 'images', 'keywords' => 'intent', 'intent' => 'intent', 'verification' => 'verify', 'search_data' => 'coverage' );
+        $by_group = array( 'meta' => 'meta', 'structure' => 'structure', 'content' => 'content', 'readability' => 'readable', 'links' => 'links', 'images' => 'images', 'keywords' => 'intent', 'intent' => 'intent', 'verification' => 'verify', 'search_data' => 'coverage', 'language' => 'language' );
         return isset( $by_group[ $row['group'] ] ) ? $by_group[ $row['group'] ] : 'content';
     }
 

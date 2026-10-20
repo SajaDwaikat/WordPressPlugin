@@ -11,7 +11,23 @@ final class SEO_Pilot_Intent {
         return array( 'informational', 'navigational', 'commercial', 'transactional' );
     }
 
+    /**
+     * Wording that signals each intent. English and Arabic are built in; a site can add other languages with
+     * the seo_pilot_intent_phrases filter (an array of intent label => list of phrases, in the same shape).
+     */
     private static function phrases() {
+        $built = self::builtin_phrases();
+        if ( ! function_exists( 'apply_filters' ) ) { return $built; }
+        $f = apply_filters( 'seo_pilot_intent_phrases', $built );
+        if ( ! is_array( $f ) ) { return $built; }
+        $out = array();
+        foreach ( self::labels() as $label ) {
+            $out[ $label ] = ( isset( $f[ $label ] ) && is_array( $f[ $label ] ) ) ? array_values( array_filter( $f[ $label ], 'is_string' ) ) : $built[ $label ];
+        }
+        return $out;
+    }
+
+    private static function builtin_phrases() {
         return array(
             'informational' => array( 'how to', 'how do', 'how does', 'how can', 'what is', 'what are', 'why', 'guide', 'tutorial', 'tips', 'explained', 'learn', 'examples', 'meaning', 'definition', 'steps', 'checklist', 'difference between',
                 'كيف', 'ما هو', 'ما هي', 'ماذا', 'لماذا', 'دليل', 'شرح', 'طريقة', 'طرق', 'نصائح', 'تعريف', 'معنى', 'خطوات', 'الفرق بين' ),

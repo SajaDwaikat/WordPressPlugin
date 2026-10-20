@@ -74,12 +74,79 @@ final class SEO_Pilot_Validator {
         return $notes;
     }
 
+    /**
+     * A note when a draft is clearly in the wrong script for the page's language. Only Arabic versus Latin
+     * script can be told apart this way; English versus French cannot, and no claim is made about it.
+     */
+    private static function lang_note( $text, array $ctx ) {
+        $expect = isset( $ctx['expected_script'] ) ? $ctx['expected_script'] : '';
+        if ( '' === $expect || (int) preg_match_all( '/\p{L}/u', (string) $text ) < 6 ) { return ''; }
+        $r = SEO_Pilot_Text::arabic_ratio( $text );
+        $name = isset( $ctx['lang_name'] ) && '' !== $ctx['lang_name'] ? $ctx['lang_name'] : 'the page language';
+        if ( 'arabic' === $expect && $r < 0.15 ) { return 'This text is not in Arabic script, but the page is set to ' . $name . '. Check the language before accepting.'; }
+        if ( 'latin' === $expect && $r >= 0.5 ) { return 'This text is in Arabic script, but the page is set to ' . $name . '. Check the language before accepting.'; }
+        return '';
+    }
+
     private static function rec( $type, $target, $original, $proposed, $reason, array $verify, array $notes = array() ) {
         return array(
             'rec_type' => $type, 'target' => $target, 'original' => (string) $original, 'proposed' => (string) $proposed,
             'rationale' => SEO_Pilot_Text::sub( self::txt( $reason ), 0, 500 ),
             'flags' => array( 'verify' => $verify, 'notes' => $notes ),
         );
+    }
+
+    /**
+     * Alt-text drafts from the vision request. Unknown image ids are ignored, every string is
+     * sanitised and capped, and each draft is checked with the same rules used on existing alt text
+     * (length, "image of", repeated words, URLs) so the editor sees the problems before accepting.
+     *
+     * @param string $raw Model output.
+     * @param array  $ctx images (id => item from the image analysis), page_title, context_text
+     * @return array|WP_Error [ recs[], warnings[] ]
+     */
+    public static function parse_alt( $raw, array $ctx ) {
+        $data = self::extract_json( $raw );
+        if ( null === $data || ! isset( $data['images'] ) || ! is_array( $data['images'] ) ) {
+            return new WP_Error( 'seo_pilot_ai_invalid_response', 'The AI answer could not be read as JSON. Try again, or use a model that follows JSON instructions reliably.' );
+        }
+        $recs = array(); $warnings = array(); $done = array();
+        foreach ( array_slice( $data['images'], 0, 10 ) as $row ) {
+            if ( ! is_array( $row ) || empty( $row['id'] ) ) { continue; }
+            $id = (string) $row['id'];
+            if ( ! isset( $ctx['images'][ $id ] ) || isset( $done[ $id ] ) ) { continue; }
+            $done[ $id ] = true;
+            $item = $ctx['images'][ $id ];
+            $name = SEO_Pilot_Images::label( $item['src'] );
+            $alt  = isset( $row['alt'] ) ? SEO_Pilot_Text::sub( self::txt( $row['alt'] ), 0, 300 ) : '';
+            $deco = ! empty( $row['decorative'] );
+
+            if ( '' === $alt && ! $deco ) { $warnings[] = 'The AI could not tell what ' . $name . ' shows, so no draft was made.'; continue; }
+            if ( $deco && 'empty_in_link' === $item['kind'] ) { $warnings[] = $name . ' is the only content of a link, so it cannot be decorative; no draft was made.'; continue; }
+            if ( $deco && 'decorative' === $item['kind'] ) { continue; }
+            if ( ! $deco && $item['has_alt'] && SEO_Pilot_Text::normalize( $alt ) === SEO_Pilot_Text::normalize( $item['alt'] ) ) { continue; }
+
+            $notes = array();
+            if ( ! $deco ) {
+                foreach ( SEO_Pilot_Images::alt_flags( $alt, isset( $ctx['page_title'] ) ? $ctx['page_title'] : '', $item['caption'] ) as $f ) { $notes[] = $f['text']; }
+                $notes = array_merge( $notes, self::figure_notes( $alt, isset( $ctx['context_text'] ) ? $ctx['context_text'] : '' ) );
+                $ln    = self::lang_note( $alt, $ctx );
+                if ( '' !== $ln ) { $notes[] = $ln; }
+            }
+            $verify = self::verify_list( isset( $row['verify'] ) ? $row['verify'] : array() );
+            array_unshift( $verify, $deco ? 'AI judged this image decorative. Confirm it adds no information.' : 'AI draft written from the picture itself: compare it with the image before accepting.' );
+
+            $rec = self::rec( 'alt_text', 'img:' . $item['hash'], $item['src'], $deco ? '' : $alt, isset( $row['reason'] ) ? $row['reason'] : '', $verify, $notes );
+            $rec['flags'] = array_merge( $rec['flags'], array(
+                'decorative' => $deco, 'mode' => $item['has_alt'] ? 'replace' : 'add', 'old_alt' => $item['has_alt'] ? $item['alt'] : '',
+            ) );
+            $recs[] = $rec;
+        }
+        foreach ( array_slice( isset( $data['warnings'] ) ? (array) $data['warnings'] : array(), 0, 5 ) as $w ) {
+            $w = is_scalar( $w ) ? SEO_Pilot_Text::sub( self::txt( $w ), 0, 200 ) : '';
+            if ( '' !== $w ) { $warnings[] = 'AI note: ' . $w; }
+        }
+        return array( 'recs' => $recs, 'warnings' => $warnings );
     }
 
     /**
@@ -100,16 +167,67 @@ final class SEO_Pilot_Validator {
         // SEO title and meta description.
         $fields = array( 'seo_title' => array( 200, 60, 'The title is longer than about 60 characters and may be shortened in search results.' ),
                          'meta_description' => array( 400, 160, 'The description is longer than about 160 characters and may be truncated in search results.' ) );
+        $localize = in_array( 'localize', $tasks, true ) && isset( $data['localize'] ) && is_array( $data['localize'] );
+        $src_lang = isset( $ctx['source_lang'] ) && '' !== $ctx['source_lang'] ? $ctx['source_lang'] : 'another language version';
         foreach ( $fields as $key => $cfg ) {
-            if ( ! in_array( $key, $tasks, true ) || ! isset( $data[ $key ] ) || ! is_array( $data[ $key ] ) ) { continue; }
-            $p = isset( $data[ $key ]['proposed'] ) ? self::txt( $data[ $key ]['proposed'] ) : '';
+            // The same two fields are produced either by their own task or by the Localize task.
+            $blk = null; $localized = false;
+            if ( in_array( $key, $tasks, true ) && isset( $data[ $key ] ) && is_array( $data[ $key ] ) ) { $blk = $data[ $key ]; }
+            elseif ( $localize && isset( $data['localize'][ $key ] ) && is_array( $data['localize'][ $key ] ) ) { $blk = $data['localize'][ $key ]; $localized = true; }
+            if ( null === $blk ) { continue; }
+            $p = isset( $blk['proposed'] ) ? self::txt( $blk['proposed'] ) : '';
             if ( '' === $p ) { continue; }
             if ( SEO_Pilot_Text::len( $p ) > $cfg[0] ) { $warnings[] = 'A proposed ' . str_replace( '_', ' ', $key ) . ' was discarded because it was far too long.'; continue; }
             $current = isset( $ctx[ $key ] ) ? (string) $ctx[ $key ] : '';
             if ( SEO_Pilot_Text::normalize( $p ) === SEO_Pilot_Text::normalize( $current ) ) { continue; }
-            $notes = self::figure_notes( $p, $source );
+            $notes = self::figure_notes( $p, $source . ( $localized && isset( $ctx['source_text'] ) ? ' ' . $ctx['source_text'] : '' ) );
             if ( SEO_Pilot_Text::len( $p ) > $cfg[1] ) { $notes[] = $cfg[2]; }
-            $recs[] = self::rec( $key, '', $current, $p, isset( $data[ $key ]['reason'] ) ? $data[ $key ]['reason'] : '', self::verify_list( isset( $data[ $key ]['verify'] ) ? $data[ $key ]['verify'] : array() ), $notes );
+            $ln = self::lang_note( $p, $ctx );
+            if ( '' !== $ln ) { $notes[] = $ln; }
+            $reason = isset( $blk['reason'] ) ? $blk['reason'] : '';
+            if ( $localized ) { $reason = 'Localized from the ' . $src_lang . ' version. ' . self::txt( $reason ); }
+            $recs[] = self::rec( $key, '', $current, $p, $reason, self::verify_list( isset( $blk['verify'] ) ? $blk['verify'] : array() ), $notes );
+        }
+
+        // Localized keyword suggestions: advice only. They are phrasing ideas, not researched terms.
+        if ( $localize && isset( $data['localize']['keywords'] ) && is_array( $data['localize']['keywords'] ) ) {
+            $kwd     = $data['localize']['keywords'];
+            $primary = isset( $kwd['primary'] ) ? SEO_Pilot_Text::sub( self::txt( $kwd['primary'] ), 0, 100 ) : '';
+            $second  = array();
+            foreach ( array_slice( isset( $kwd['secondary'] ) ? (array) $kwd['secondary'] : array(), 0, 8 ) as $x ) {
+                $x = is_scalar( $x ) ? SEO_Pilot_Text::sub( self::txt( $x ), 0, 100 ) : '';
+                if ( '' !== $x && SEO_Pilot_Text::normalize( $x ) !== SEO_Pilot_Text::normalize( $primary ) ) { $second[] = $x; }
+            }
+            if ( '' !== $primary || $second ) {
+                $knotes = array();
+                if ( '' !== $primary && ! empty( $ctx['source_keyword'] ) && SEO_Pilot_Text::normalize( $primary ) === SEO_Pilot_Text::normalize( $ctx['source_keyword'] ) ) {
+                    $knotes[] = 'The primary keyword is identical to the source page\'s. That is fine for a brand name; otherwise check that it is how people in this language actually search.';
+                }
+                $ln = self::lang_note( $primary, $ctx );
+                if ( '' !== $ln ) { $knotes[] = $ln; }
+                $recs[] = self::rec( 'keywords_local', '', isset( $ctx['source_keyword'] ) ? $ctx['source_keyword'] : '', wp_json_encode( array( 'primary' => $primary, 'secondary' => $second, 'reason' => isset( $kwd['reason'] ) ? SEO_Pilot_Text::sub( self::txt( $kwd['reason'] ), 0, 400 ) : '' ) ),
+                    'Suggested wording only. The AI has no search data, so nothing here is checked against what people really search; confirm the phrases with someone who knows the audience, then enter the ones you choose under Page settings.', array(), $knotes );
+            }
+        }
+
+        // Title review: qualitative critique plus alternatives. Advisory only; never applied directly.
+        if ( in_array( 'title_review', $tasks, true ) && isset( $data['title_review'] ) && is_array( $data['title_review'] ) ) {
+            $tr       = $data['title_review'];
+            $critique = isset( $tr['critique'] ) ? SEO_Pilot_Text::sub( self::txt( $tr['critique'] ), 0, 600 ) : '';
+            $current  = '' !== (string) $ctx['seo_title'] ? (string) $ctx['seo_title'] : (string) $ctx['title'];
+            $alts     = array(); $notes = array();
+            foreach ( array_slice( isset( $tr['alternatives'] ) ? (array) $tr['alternatives'] : array(), 0, 3 ) as $x ) {
+                if ( ! is_array( $x ) || empty( $x['title'] ) ) { continue; }
+                $t = self::txt( $x['title'] );
+                if ( '' === $t || SEO_Pilot_Text::len( $t ) > 200 || SEO_Pilot_Text::normalize( $t ) === SEO_Pilot_Text::normalize( $current ) ) { continue; }
+                $alts[] = array( 'title' => $t, 'reason' => isset( $x['reason'] ) ? SEO_Pilot_Text::sub( self::txt( $x['reason'] ), 0, 300 ) : '' );
+                foreach ( self::figure_notes( $t, $source ) as $n ) { $notes[ $n ] = true; }
+            }
+            if ( '' !== $critique || $alts ) {
+                $recs[] = self::rec( 'title_review', '', $current, wp_json_encode( array( 'critique' => $critique, 'alternatives' => $alts ) ),
+                    'Qualitative advice from the AI model. The plugin\'s own measurements are shown separately in the Title analysis panel.',
+                    self::verify_list( isset( $tr['verify'] ) ? $tr['verify'] : array() ), array_keys( $notes ) );
+            }
         }
 
         // Paragraph rewrites.
@@ -130,6 +248,8 @@ final class SEO_Pilot_Validator {
                 $p_len = SEO_Pilot_Text::len( $p_plain );
                 if ( $p_len > $o_len * 3 + 200 ) { $warnings[] = 'The rewrite for ' . $id . ' was discarded: it is much longer than the original and may add content.'; continue; }
                 $notes = self::figure_notes( $p_plain, $source );
+                $ln    = self::lang_note( $p_plain, $ctx );
+                if ( '' !== $ln ) { $notes[] = $ln; }
                 if ( $removed ) { $notes[] = $removed . ' link(s) the AI tried to add were removed because they were not in the original paragraph.'; }
                 $missing = array_diff( SEO_Pilot_Parser::hrefs( $seg['inner'] ), SEO_Pilot_Parser::hrefs( $proposed ) );
                 if ( $missing ) { $notes[] = 'The rewrite drops ' . count( $missing ) . ' link(s) that are in the original. Check before accepting.'; }

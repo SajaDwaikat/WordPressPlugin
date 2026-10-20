@@ -101,6 +101,27 @@ final class SEO_Pilot_Text {
     }
 
     /**
+     * Extra folding for MATCHING Arabic text, on top of normalize(): the spelling variants people use
+     * interchangeably are treated as one letter (ى/ي, ة/ه, ؤ/و, ئ/ي, and the Persian forms of ک and ی).
+     * One character is replaced by one character, so string positions are unchanged. Not used for duplicate detection.
+     */
+    public static function fold_arabic( $s ) {
+        return strtr( (string) $s, array(
+            "\u{0649}" => "\u{064A}", "\u{0629}" => "\u{0647}", "\u{0624}" => "\u{0648}", "\u{0626}" => "\u{064A}", "\u{06A9}" => "\u{0643}", "\u{06CC}" => "\u{064A}",
+        ) );
+    }
+
+    /**
+     * True when SEO Pilot has word lists (stopwords, search-intent wording) for a language. Built in: English and Arabic.
+     * A site can declare support for another language after adding its words with the seo_pilot_stopwords filter.
+     */
+    public static function lists_supported( $code ) {
+        $lang = class_exists( 'SEO_Pilot_Hreflang' ) ? SEO_Pilot_Hreflang::lang_part( $code ) : strtolower( substr( (string) $code, 0, 2 ) );
+        $ok   = '' === $lang || in_array( $lang, array( 'ar', 'en' ), true );
+        return function_exists( 'apply_filters' ) ? (bool) apply_filters( 'seo_pilot_language_lists_supported', $ok, $lang ) : $ok;
+    }
+
+    /**
      * Occurrences of a phrase. Latin phrases match on word boundaries; Arabic phrases match as
      * substrings because Arabic attaches prefixes (و، ب، ل، ال) directly to words.
      */
@@ -109,6 +130,8 @@ final class SEO_Pilot_Text {
         $p = self::normalize( $phrase );
         if ( '' === $p || '' === $h ) { return 0; }
         if ( self::contains_arabic( $p ) ) {
+            $h = self::fold_arabic( $h );
+            $p = self::fold_arabic( $p );
             return function_exists( 'mb_substr_count' ) ? mb_substr_count( $h, $p, 'UTF-8' ) : substr_count( $h, $p );
         }
         $re = '/(?<![\p{L}\p{N}])' . preg_quote( $p, '/' ) . '(?![\p{L}\p{N}])/u';
@@ -142,6 +165,11 @@ final class SEO_Pilot_Text {
             $list = array();
             foreach ( preg_split( '/\s+/u', $en . ' ' . $ar, -1, PREG_SPLIT_NO_EMPTY ) as $w ) {
                 $list[ self::normalize( $w ) ] = true;
+            }
+            // Sites can add words for other languages: add_filter( 'seo_pilot_stopwords', fn( $w ) => array_merge( $w, array( 'de', 'la', 'le' ) ) ).
+            $extra = function_exists( 'apply_filters' ) ? apply_filters( 'seo_pilot_stopwords', array() ) : array();
+            foreach ( is_array( $extra ) ? $extra : array() as $w ) {
+                if ( is_string( $w ) && '' !== trim( $w ) ) { $list[ self::normalize( $w ) ] = true; }
             }
         }
         return $list;

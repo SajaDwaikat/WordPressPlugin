@@ -22,8 +22,40 @@ final class SEO_Pilot_Settings {
             'ack'                 => 0,
             'ack_user'            => 0,
             'ack_time'            => '',
+            // Sending images to the provider is a separate, opt-in decision from sending text.
+            'send_images'         => 0,
+            'ack_images'          => 0,
+            'ack_images_user'     => 0,
+            'ack_images_time'     => '',
+            // Multilingual sites: the languages the site uses, which one is the default, and what SEO Pilot may print.
+            'languages'           => array(),
+            'default_lang'        => '',
+            'hreflang_output'     => 0,
+            'html_lang'           => 0,
             'delete_on_uninstall' => 0,
         );
+    }
+
+    /**
+     * Rows from the Languages table, cleaned: code (normalised, unique), label, note. At most 12.
+     *
+     * @return array[]
+     */
+    public static function clean_languages( $rows ) {
+        $out = array(); $seen = array();
+        foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+            if ( ! is_array( $row ) ) { continue; }
+            $code = SEO_Pilot_Hreflang::normalize_code( isset( $row['code'] ) ? (string) $row['code'] : '' );
+            if ( '' === $code || 'x-default' === $code || isset( $seen[ $code ] ) ) { continue; }
+            $seen[ $code ] = true;
+            $out[] = array(
+                'code'  => $code,
+                'label' => SEO_Pilot_Text::sub( sanitize_text_field( isset( $row['label'] ) ? (string) $row['label'] : '' ), 0, 60 ),
+                'note'  => SEO_Pilot_Text::sub( sanitize_text_field( isset( $row['note'] ) ? (string) $row['note'] : '' ), 0, 200 ),
+            );
+            if ( count( $out ) >= 12 ) { break; }
+        }
+        return $out;
     }
 
     public static function all() {
@@ -143,6 +175,22 @@ final class SEO_Pilot_Settings {
         return '';
     }
 
+    /** Images may be sent only when the feature is switched on AND its own confirmation was given. */
+    public static function images_ready() {
+        $s = self::all();
+        return ! empty( $s['send_images'] ) && ! empty( $s['ack_images'] );
+    }
+
+    /** Empty string when ready; otherwise what the editor must do first (text settings must be complete too). */
+    public static function images_problem() {
+        $p = self::configuration_problem();
+        if ( '' !== $p ) { return $p; }
+        if ( ! self::images_ready() ) {
+            return 'Sending images to the AI provider is switched off. To draft alt text with AI, enable it and confirm in SEO Pilot → Settings → Images.';
+        }
+        return '';
+    }
+
     /* ------------------------------------------------------------ sanitizing */
 
     /** register_setting() callback. Must be idempotent: WordPress can call it twice on first save. */
@@ -175,6 +223,26 @@ final class SEO_Pilot_Settings {
             } else {
                 $clean['ack_user'] = get_current_user_id();
                 $clean['ack_time'] = current_time( 'mysql' );
+            }
+        }
+
+        // Languages. A form without the table leaves the saved languages as they were.
+        $clean['languages'] = array_key_exists( 'languages', $input ) ? self::clean_languages( $input['languages'] ) : ( isset( $old['languages'] ) ? self::clean_languages( $old['languages'] ) : array() );
+        $dl = array_key_exists( 'languages', $input ) ? SEO_Pilot_Hreflang::normalize_code( isset( $input['default_lang'] ) ? (string) $input['default_lang'] : '' ) : SEO_Pilot_Hreflang::normalize_code( isset( $old['default_lang'] ) ? (string) $old['default_lang'] : '' );
+        $codes = array_map( function ( $r ) { return $r['code']; }, $clean['languages'] );
+        $clean['default_lang']    = in_array( $dl, $codes, true ) ? $dl : '';
+        $clean['hreflang_output'] = array_key_exists( 'languages', $input ) ? ( ! empty( $input['hreflang_output'] ) ? 1 : 0 ) : ( ! empty( $old['hreflang_output'] ) ? 1 : 0 );
+        $clean['html_lang']       = array_key_exists( 'languages', $input ) ? ( ! empty( $input['html_lang'] ) ? 1 : 0 ) : ( ! empty( $old['html_lang'] ) ? 1 : 0 );
+
+        $clean['send_images'] = ! empty( $input['send_images'] ) ? 1 : 0;
+        if ( ! empty( $input['ack_images'] ) ) {
+            $clean['ack_images'] = 1;
+            if ( ! empty( $old['ack_images'] ) ) {
+                $clean['ack_images_user'] = (int) $old['ack_images_user'];
+                $clean['ack_images_time'] = $old['ack_images_time'];
+            } else {
+                $clean['ack_images_user'] = get_current_user_id();
+                $clean['ack_images_time'] = current_time( 'mysql' );
             }
         }
 

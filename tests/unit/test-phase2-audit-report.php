@@ -31,7 +31,7 @@ t_group( 'Report: criteria and CSV' );
 $a = SEO_Pilot_Audit::analyze( $page( array( 'content' => '<h2>A</h2><p>t</p><h4>Skip</h4><img src="x.jpg">', 'title' => '' ) ) );
 $crit = SEO_Pilot_Report::criteria( $a );
 $by = array(); foreach ( $crit as $c ) { $by[ $c['key'] ] = $c; }
-t_eq( 10, count( $crit ), 'all criteria listed' );
+t_eq( 11, count( $crit ), 'all criteria listed' );
 t_eq( 'warn', $by['structure']['status'], 'heading skip makes Heading structure "warn"' );
 t_ok( false !== strpos( implode( ' ', $by['structure']['influenced_by'] ), 'logical hierarchy' ), 'criterion lists exactly which check influenced it' );
 t_eq( 'fail', $by['images']['status'], 'missing alt makes Images "fail"' );

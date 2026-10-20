@@ -15,6 +15,9 @@ if ( ! class_exists( 'WP_Error' ) ) {
     }
     function is_wp_error( $x ) { return $x instanceof WP_Error; }
 }
+// Minimal stand-ins for the few WordPress functions the validator calls, so it can be unit-tested.
+if ( ! function_exists( 'wp_json_encode' ) ) { function wp_json_encode( $v ) { return json_encode( $v, JSON_UNESCAPED_UNICODE ); } }
+if ( ! function_exists( 'sanitize_text_field' ) ) { function sanitize_text_field( $s ) { return trim( preg_replace( '/\s+/u', ' ', strip_tags( (string) $s ) ) ); } }
 
 require SEO_PILOT_PATH . 'includes/class-seo-pilot-loader.php';
 SEO_Pilot_Loader::register();

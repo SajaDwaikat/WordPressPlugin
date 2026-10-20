@@ -7,7 +7,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * touching a live page or another plugin's field, snapshots the original, writes a history
  * entry for every changed field, and re-runs the audit afterwards.
  *
- * It can change only: post content (paragraph text and missing img alt), the SEO title and the
+ * It can change only: post content (paragraph text, internal links and img alt), the SEO title and the
  * meta description. Canonicals, robots directives, structured data, slugs and dates are never touched.
  */
 final class SEO_Pilot_Approval {
@@ -36,7 +36,7 @@ final class SEO_Pilot_Approval {
      *
      * @return array post, changes[], blocked[], stale_ids[], noop_ids[], live, revisions, requires_owner_confirm
      */
-    public static function plan( $post_id ) {
+    public static function plan( $post_id, array $only = array() ) {
         $post = get_post( $post_id );
         $plan = array( 'post' => $post, 'changes' => array(), 'blocked' => array(), 'stale_ids' => array(), 'noop_ids' => array(), 'live' => false, 'revisions' => false, 'requires_owner_confirm' => false );
         if ( ! $post ) { return $plan; }
@@ -45,7 +45,8 @@ final class SEO_Pilot_Approval {
 
         $accepted = array();
         foreach ( SEO_Pilot_Recs::for_post( $post_id, array( 'accepted' ) ) as $r ) {
-            if ( SEO_Pilot_Recs::is_applicable( $r['rec_type'] ) ) { $accepted[] = $r; }
+            // $only: apply just these recommendation ids (the Fix assistant), leaving other accepted ones for the normal panel.
+            if ( SEO_Pilot_Recs::is_applicable( $r['rec_type'] ) && ( ! $only || in_array( (int) $r['id'], array_map( 'intval', $only ), true ) ) ) { $accepted[] = $r; }
         }
         $owner = SEO_Pilot_Compat::owner();
 
@@ -109,12 +110,22 @@ final class SEO_Pilot_Approval {
                 $new_content = $res;
                 $ids[]       = $r['id'];
             } elseif ( 'alt_text' === $r['rec_type'] ) {
-                $alt = sanitize_text_field( $r['proposed'] );
-                if ( '' === $alt ) { $plan['blocked'][] = array( 'rec_id' => $r['id'], 'message' => 'An alt text entry is empty.' ); continue; }
-                list( $c, $n ) = SEO_Pilot_Parser::set_img_alt( $new_content, $r['original'], $alt );
+                $alt        = sanitize_text_field( $r['proposed'] );
+                $decorative = ! empty( $r['flags']['decorative'] );
+                $replace    = isset( $r['flags']['mode'] ) && 'replace' === $r['flags']['mode'];
+                // An empty alt is only valid when a person marked the image as decorative.
+                if ( '' === $alt && ! $decorative ) { $plan['blocked'][] = array( 'rec_id' => $r['id'], 'message' => 'An alt text entry is empty.' ); continue; }
+                if ( $replace ) {
+                    $old = isset( $r['flags']['old_alt'] ) ? (string) $r['flags']['old_alt'] : '';
+                    list( $c, $n ) = SEO_Pilot_Parser::replace_img_alt( $new_content, $r['original'], $old, $alt );
+                } else {
+                    list( $c, $n ) = SEO_Pilot_Parser::set_img_alt( $new_content, $r['original'], $alt );
+                }
                 if ( 0 === $n ) {
                     $plan['stale_ids'][] = $r['id'];
-                    $plan['blocked'][]   = array( 'rec_id' => $r['id'], 'message' => 'The image for an alt text entry is no longer in the post without an alt attribute.' );
+                    $plan['blocked'][]   = array( 'rec_id' => $r['id'], 'message' => $replace
+                        ? 'The image or its alt text has changed since this suggestion was made, so it was not replaced. Reject it and review the image again.'
+                        : 'The image for an alt text entry is no longer in the post without an alt attribute.' );
                     continue;
                 }
                 $new_content = $c;
@@ -136,16 +147,16 @@ final class SEO_Pilot_Approval {
 
     /**
      * @param int   $post_id
-     * @param array $opts mode ('live'|'draft_copy'), confirm_live (bool), confirm_owner (bool)
+     * @param array $opts mode ('live'|'draft_copy'), confirm_live (bool), confirm_owner (bool), only (int[]: recommendation ids to apply; empty = all accepted)
      * @return array|WP_Error
      */
     public static function apply( $post_id, array $opts = array() ) {
-        $opts = array_merge( array( 'mode' => 'live', 'confirm_live' => false, 'confirm_owner' => false ), $opts );
+        $opts = array_merge( array( 'mode' => 'live', 'confirm_live' => false, 'confirm_owner' => false, 'only' => array() ), $opts );
         $post = get_post( $post_id );
         if ( ! $post ) { return new WP_Error( 'seo_pilot_no_post', 'That post no longer exists.' ); }
         if ( ! current_user_can( 'edit_post', $post_id ) ) { return new WP_Error( 'seo_pilot_forbidden', 'You are not allowed to edit this post.' ); }
 
-        $plan = self::plan( $post_id );
+        $plan = self::plan( $post_id, (array) $opts['only'] );
         foreach ( $plan['stale_ids'] as $sid ) { SEO_Pilot_Recs::set_status( $sid, 'stale' ); }
         if ( $plan['blocked'] ) {
             return new WP_Error( 'seo_pilot_blocked', 'Nothing was changed. ' . implode( ' ', array_map( function ( $b ) { return $b['message']; }, $plan['blocked'] ) ) );

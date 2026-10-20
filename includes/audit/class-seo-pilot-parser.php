@@ -52,11 +52,31 @@ final class SEO_Pilot_Parser {
             } elseif ( 'img' === $name ) {
                 $src = trim( (string) $node->getAttribute( 'src' ) );
                 if ( '' === $src ) { $src = trim( (string) $node->getAttribute( 'data-src' ) ); }
+                // Surroundings: is the image the content of a link, and does it sit in a figure with a caption?
+                $in_link = false; $link_text = ''; $caption = '';
+                for ( $p = $node->parentNode; $p && XML_ELEMENT_NODE === $p->nodeType; $p = $p->parentNode ) {
+                    $pn = strtolower( $p->nodeName );
+                    if ( 'a' === $pn && ! $in_link ) {
+                        $in_link = true;
+                        $copy = $p->cloneNode( true );
+                        foreach ( iterator_to_array( $copy->getElementsByTagName( 'img' ) ) as $im ) { $im->parentNode->removeChild( $im ); }
+                        $link_text = SEO_Pilot_Text::ws( $copy->textContent );
+                        if ( '' === $link_text ) { $link_text = trim( (string) $p->getAttribute( 'aria-label' ) ); }
+                    } elseif ( 'figure' === $pn && '' === $caption ) {
+                        $caps = $p->getElementsByTagName( 'figcaption' );
+                        if ( $caps->length ) { $caption = SEO_Pilot_Text::ws( $caps->item( 0 )->textContent ); }
+                    }
+                }
+                $aid = ( 1 === preg_match( '/(?:^|\s)wp-image-(\d+)(?:\s|$)/', (string) $node->getAttribute( 'class' ), $am ) ) ? (int) $am[1] : 0;
                 $out['images'][] = array(
-                    'src'     => $src,
-                    'has_alt' => $node->hasAttribute( 'alt' ),
-                    'alt'     => trim( (string) $node->getAttribute( 'alt' ) ),
-                    'context' => $current_heading,
+                    'src'           => $src,
+                    'has_alt'       => $node->hasAttribute( 'alt' ),
+                    'alt'           => trim( (string) $node->getAttribute( 'alt' ) ),
+                    'context'       => $current_heading,
+                    'in_link'       => $in_link,
+                    'link_text'     => $link_text,
+                    'caption'       => $caption,
+                    'attachment_id' => $aid,
                 );
             } elseif ( 'a' === $name ) {
                 $text    = SEO_Pilot_Text::ws( $node->textContent );
@@ -188,6 +208,33 @@ final class SEO_Pilot_Parser {
                 if ( html_entity_decode( $sm[2], ENT_QUOTES, 'UTF-8' ) !== $src ) { return $tag; }
                 $count++;
                 return preg_replace( '/^<img\b/i', '<img alt="' . $esc . '"', $tag, 1 );
+            },
+            (string) $content
+        );
+        return array( null === $new ? (string) $content : $new, $count );
+    }
+
+    /**
+     * Replace the alt attribute of images that already have one. An image is changed only when its
+     * src matches AND its current alt text equals $old_alt exactly, so a suggestion made against
+     * older content cannot overwrite something an editor has since changed.
+     *
+     * @return array [new_content, number_of_images_changed]
+     */
+    public static function replace_img_alt( $content, $src, $old_alt, $new_alt ) {
+        $count = 0;
+        $esc   = htmlspecialchars( (string) $new_alt, ENT_QUOTES, 'UTF-8' );
+        $old   = trim( (string) $old_alt );
+        $new   = preg_replace_callback(
+            '/<img\b[^>]*>/i',
+            function ( $m ) use ( $src, $esc, $old, &$count ) {
+                $tag = $m[0];
+                if ( ! preg_match( '/\s(?:data-)?src\s*=\s*(["\'])(.*?)\1/is', $tag, $sm ) ) { return $tag; }
+                if ( html_entity_decode( $sm[2], ENT_QUOTES, 'UTF-8' ) !== $src ) { return $tag; }
+                if ( ! preg_match( '/(\salt\s*=\s*)(["\'])(.*?)\2/is', $tag, $am ) ) { return $tag; }
+                if ( trim( html_entity_decode( $am[3], ENT_QUOTES, 'UTF-8' ) ) !== $old ) { return $tag; }
+                $count++;
+                return preg_replace( '/(\salt\s*=\s*)(["\'])(.*?)\2/is', '$1"' . str_replace( array( '\\', '$' ), array( '\\\\', '\\$' ), $esc ) . '"', $tag, 1 );
             },
             (string) $content
         );

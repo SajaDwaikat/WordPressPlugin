@@ -64,12 +64,15 @@ final class SEO_Pilot_Audit_Runner {
             'orderby' => 'ID', 'order' => 'ASC', 'fields' => 'ids', 'no_found_rows' => true,
         ) );
         if ( $ids ) { update_meta_cache( 'post', $ids ); }
-        $idx = array( 'title' => array(), 'meta' => array(), 'kw' => array(), 'sketch' => array() );
+        $idx = array( 'title' => array(), 'meta' => array(), 'kw' => array(), 'sketch' => array(), 'title_pool' => array() );
         foreach ( $ids as $id ) {
             $label = wp_strip_all_tags( get_the_title( $id ) );
             $t     = SEO_Pilot_Compat::get( $id, 'seo_title' );
             $tv    = '' !== $t['value'] ? $t['value'] : $label;
-            if ( '' !== $tv && ! $t['template_vars'] ) { $idx['title'][ SEO_Pilot_Text::normalize( $tv ) ][ $id ] = $label; }
+            if ( '' !== $tv && ! $t['template_vars'] ) {
+                $idx['title'][ SEO_Pilot_Text::normalize( $tv ) ][ $id ] = $label;
+                $idx['title_pool'][ $id ] = array( 'label' => $label, 'key' => SEO_Pilot_Text::normalize( $tv ), 'tokens' => SEO_Pilot_Title::tokens( $tv ) );
+            }
             $m = SEO_Pilot_Compat::get( $id, 'meta_description' );
             if ( '' !== $m['value'] && ! $m['template_vars'] ) { $idx['meta'][ SEO_Pilot_Text::normalize( $m['value'] ) ][ $id ] = $label; }
             $idx['sketch'][ $id ] = array( 'title' => $label, 'sketch' => self::cached_sketch( $id ) );
@@ -91,11 +94,11 @@ final class SEO_Pilot_Audit_Runner {
         return $k;
     }
 
-    private static function others( array $map, $key, $self_id ) {
+    private static function others( array $map, $key, $self_id, array $exclude = array() ) {
         $out = array();
         if ( isset( $map[ $key ] ) ) {
             foreach ( $map[ $key ] as $id => $label ) {
-                if ( (int) $id !== (int) $self_id ) { $out[] = array( 'id' => (int) $id, 'title' => $label, 'url' => '' ); }
+                if ( (int) $id !== (int) $self_id && ! in_array( (int) $id, $exclude, true ) ) { $out[] = array( 'id' => (int) $id, 'title' => $label, 'url' => '' ); }
             }
         }
         return $out;
@@ -143,6 +146,11 @@ final class SEO_Pilot_Audit_Runner {
         $kkey = SEO_Pilot_Text::normalize( $set['primary'] );
         $kw_own = trim( (string) get_post_meta( $id, self::META_PRIMARY, true ) );
 
+        // Translations of this page are not duplicates, cannibals or near-duplicates of it: they are checked on their own terms in the language checks.
+        $li      = SEO_Pilot_Lang::for_post( $id );
+        $exclude = SEO_Pilot_Lang::translation_ids( $li );
+        foreach ( $li['members'] as $mc => $m ) { $li['members'][ $mc ]['sketch'] = self::cached_sketch( $m['id'] ); }
+
         return array(
             'id' => $id, 'title' => $title, 'url' => (string) get_permalink( $post ), 'slug' => $post->post_name,
             'content' => (string) $post->post_content, 'post_type' => $post->post_type, 'post_status' => $post->post_status, 'modified' => $post->post_modified,
@@ -152,17 +160,56 @@ final class SEO_Pilot_Audit_Runner {
             'keywords' => array( 'primary' => $set['primary'], 'secondary' => $set['secondary'], 'primary_source' => $set['primary_source'] ),
             'intent_user' => $set['intent'], 'audience' => $set['audience'],
             'noindex' => SEO_Pilot_Compat::robots_noindex( $id ), 'site_noindex' => SEO_Pilot_Compat::site_discourages_search(),
-            'cannibal' => ( '' !== $kkey && '' !== $kw_own ) ? self::others( $idx['kw'], $kkey, $id ) : array(),
+            'cannibal' => ( '' !== $kkey && '' !== $kw_own ) ? self::others( $idx['kw'], $kkey, $id, $exclude ) : array(),
             'duplicates' => array(
-                'title' => ( ! $st['template_vars'] && '' !== $tkey ) ? self::others( $idx['title'], $tkey, $id ) : array(),
-                'meta'  => ( ! $md['template_vars'] && '' !== $mkey ) ? self::others( $idx['meta'], $mkey, $id ) : array(),
+                'title' => ( ! $st['template_vars'] && '' !== $tkey ) ? self::others( $idx['title'], $tkey, $id, $exclude ) : array(),
+                'meta'  => ( ! $md['template_vars'] && '' !== $mkey ) ? self::others( $idx['meta'], $mkey, $id, $exclude ) : array(),
             ),
-            'similar' => SEO_Pilot_Similarity::find_similar( SEO_Pilot_Similarity::sketch( SEO_Pilot_Text::plain( (string) $post->post_content ) ), $idx['sketch'], $id, 0.5, 5 ),
+            'similar' => SEO_Pilot_Similarity::find_similar( SEO_Pilot_Similarity::sketch( SEO_Pilot_Text::plain( (string) $post->post_content ) ), array_diff_key( $idx['sketch'], array_flip( $exclude ) ), $id, 0.5, 5 ),
+            'lang_info' => $li,
             'search_data' => SEO_Pilot_Searchdata::for_audit( $id, SEO_Pilot_Text::plain( (string) $post->post_content ) ),
             'site_host' => (string) wp_parse_url( home_url(), PHP_URL_HOST ),
             'link_resolver' => self::link_resolver(),
             'year' => (int) wp_date( 'Y' ),
+            'site_name' => wp_strip_all_tags( (string) get_bloginfo( 'name' ) ),
+            'title_pool' => $idx['title_pool'],
+            'image_data' => self::image_data( $post ),
         );
+    }
+
+    /**
+     * What WordPress knows about the images in a post: Media Library alt text and file size for
+     * images that carry a wp-image-N class (at most 40), plus the featured image. Read only.
+     */
+    public static function image_data( WP_Post $post ) {
+        $ids = array();
+        if ( preg_match_all( '/wp-image-(\d+)/', (string) $post->post_content, $m ) ) {
+            $ids = array_slice( array_unique( array_map( 'intval', $m[1] ) ), 0, 40 );
+        }
+        $featured_id = (int) get_post_thumbnail_id( $post );
+        $all = $ids;
+        if ( $featured_id ) { $all[] = $featured_id; }
+        if ( $all ) { update_meta_cache( 'post', $all ); }
+
+        $read = function ( $aid ) {
+            if ( 'attachment' !== get_post_type( $aid ) ) { return null; }
+            $meta = wp_get_attachment_metadata( $aid );
+            return array(
+                'library_alt' => trim( (string) get_post_meta( $aid, '_wp_attachment_image_alt', true ) ),
+                'filesize'    => ( is_array( $meta ) && ! empty( $meta['filesize'] ) ) ? (int) $meta['filesize'] : 0,
+            );
+        };
+        $by_id = array();
+        foreach ( $ids as $aid ) {
+            $row = $read( $aid );
+            if ( $row ) { $by_id[ $aid ] = $row; }
+        }
+        $featured = null;
+        if ( $featured_id ) {
+            $row = $read( $featured_id );
+            if ( $row ) { $featured = array( 'id' => $featured_id, 'alt' => $row['library_alt'], 'filesize' => $row['filesize'] ); }
+        }
+        return array( 'by_id' => $by_id, 'featured' => $featured );
     }
 
     /** Audit one post and store the result. */

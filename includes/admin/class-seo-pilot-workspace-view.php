@@ -136,7 +136,10 @@ final class SEO_Pilot_Workspace_View {
             <?php
             self::section_fields( $post );
             self::section_page_settings( $post, $audit );
+            self::section_language( $post, $audit );
+            self::section_fixes( $post, $audit );
             self::section_assessment( $audit );
+            self::section_title( $audit );
             self::section_findings( $audit );
             self::section_alt( $post, $audit );
             self::section_searchdata( $post );
@@ -216,7 +219,7 @@ final class SEO_Pilot_Workspace_View {
     }
 
     private static function group_label( $g ) {
-        $m = array( 'meta' => 'Titles, descriptions and indexing', 'structure' => 'Structure and headings', 'content' => 'Content', 'readability' => 'Readability', 'links' => 'Links', 'images' => 'Images', 'keywords' => 'Keywords', 'intent' => 'Search intent alignment', 'verification' => 'Facts to verify' );
+        $m = array( 'meta' => 'Titles, descriptions and indexing', 'structure' => 'Structure and headings', 'content' => 'Content', 'readability' => 'Readability', 'links' => 'Links', 'images' => 'Images', 'keywords' => 'Keywords', 'intent' => 'Search intent alignment', 'verification' => 'Facts to verify', 'language' => 'Language and translations' );
         return isset( $m[ $g ] ) ? $m[ $g ] : $g;
     }
 
@@ -263,6 +266,317 @@ final class SEO_Pilot_Workspace_View {
         <?php
     }
 
+    /** Before → after for one proposed change, as escaped HTML. */
+    private static function fix_change_html( array $r ) {
+        if ( 'alt_text' === $r['rec_type'] ) {
+            $deco = ! empty( $r['flags']['decorative'] );
+            $img  = '<code dir="ltr">' . esc_html( SEO_Pilot_Images::label( $r['original'] ) ) . '</code> ';
+            if ( $deco ) { return $img . esc_html__( 'mark as decorative (empty alt text)', 'seo-pilot' ); }
+            if ( isset( $r['flags']['mode'] ) && 'replace' === $r['flags']['mode'] ) {
+                $old = isset( $r['flags']['old_alt'] ) ? (string) $r['flags']['old_alt'] : '';
+                return $img . '<del class="seo-pilot-del">' . esc_html( '' === $old ? __( '(empty)', 'seo-pilot' ) : $old ) . '</del> → <ins class="seo-pilot-ins">' . esc_html( $r['proposed'] ) . '</ins>';
+            }
+            return $img . esc_html__( 'add alt text:', 'seo-pilot' ) . ' <ins class="seo-pilot-ins">' . esc_html( $r['proposed'] ) . '</ins>';
+        }
+        return '' === trim( $r['original'] ) ? '<em>' . esc_html__( '(empty)', 'seo-pilot' ) . '</em> → <ins class="seo-pilot-ins">' . esc_html( $r['proposed'] ) . '</ins>' : self::diff( $r['original'], $r['proposed'] );
+    }
+
+    private static function verdict_badge( $verdict ) {
+        $m = array( 'verified' => array( 'Verified', 'check-pass' ), 'partial' => array( 'Partly improved', 'check-warn' ), 'not_resolved' => array( 'Not resolved', 'check-warn' ), 'regressed' => array( 'Check this', 'check-fail' ), 'nothing' => array( 'Nothing to compare', 'muted' ) );
+        $v = isset( $m[ $verdict ] ) ? $m[ $verdict ] : $m['nothing'];
+        return self::badge( $v[0], $v[1] );
+    }
+
+    /**
+     * The Fix assistant (Assisted mode): 1. choose fixes, 2. review the proposed changes, 3. apply the ticked ones and read the
+     * before/after check. Every step is a separate button; the AI is called only by "Prepare", and the page only changes on "Apply".
+     */
+    private static function section_fixes( WP_Post $post, array $audit ) {
+        $ctx    = SEO_Pilot_Workspace::fix_context( $post, $audit );
+        $fixes  = SEO_Pilot_Fixes::for_audit( $audit, $ctx );
+        $last   = get_transient( 'seo_pilot_fixrun_' . $post->ID );
+        $props  = array();
+        foreach ( SEO_Pilot_Recs::for_post( $post->ID, array( 'pending', 'accepted' ) ) as $r ) {
+            if ( in_array( $r['rec_type'], array( 'seo_title', 'meta_description', 'alt_text' ), true ) ) { $props[] = $r; }
+        }
+        $live   = SEO_Pilot_Util::is_live_status( $post->post_status );
+        $third  = SEO_Pilot_Compat::is_third_party( SEO_Pilot_Compat::owner() );
+        $areas  = array();
+        foreach ( $fixes as $fx ) { $areas[ $fx['area_label'] ][] = $fx; }
+        ?>
+        <div class="seo-pilot-panel seo-pilot-fixes">
+            <h2><?php esc_html_e( 'Fix assistant', 'seo-pilot' ); ?></h2>
+            <p class="description"><?php esc_html_e( 'Finds problems this plugin can help fix, prepares proposed changes, and applies the ones you tick. Then it re-runs the audit and tells you whether the problems are gone. Nothing changes on the page until you press "Apply selected changes", and every change can be rolled back.', 'seo-pilot' ); ?></p>
+
+            <?php if ( is_array( $last ) ) : $v = $last['verify']; $open = SEO_Pilot_History::open_groups( $post->ID, 10 ); ?>
+                <h3><?php esc_html_e( 'Result of the last run', 'seo-pilot' ); ?> <?php echo self::verdict_badge( $v['verdict'] ); // phpcs:ignore WordPress.Security.EscapeOutput ?></h3>
+                <p><?php echo esc_html( SEO_Pilot_Verify::message( $v ) ); ?>
+                    <span class="description"><?php echo esc_html( sprintf( ' Applied %s at %s.', implode( ', ', array_map( 'strval', $last['fields'] ) ), $last['at'] ) ); ?></span></p>
+                <p class="description"><?php echo esc_html( sprintf( 'Findings by severity, before → after: high %d → %d, medium %d → %d, low %d → %d.',
+                    $v['severity_before']['high'], $v['severity_after']['high'], $v['severity_before']['medium'], $v['severity_after']['medium'], $v['severity_before']['low'], $v['severity_after']['low'] ) ); ?></p>
+                <ul class="seo-pilot-livenotes">
+                    <?php foreach ( $v['resolved'] as $f ) : ?><li class="live-ok"><?php echo esc_html( 'Solved: ' . $f['what'] ); ?></li><?php endforeach; ?>
+                    <?php foreach ( $v['improved'] as $f ) : ?><li class="live-ok"><?php echo esc_html( sprintf( 'Smaller: %s (%d → %d)', $f['what'], $f['from'], $f['to'] ) ); ?></li><?php endforeach; ?>
+                    <?php foreach ( $v['remaining'] as $f ) : ?><li class="live-warn"><?php echo esc_html( 'Still reported: ' . $f['what'] ); ?></li><?php endforeach; ?>
+                    <?php foreach ( array_merge( $v['new'], $v['worsened'] ) as $f ) : ?><li class="live-warn"><?php echo esc_html( 'New or larger (' . $f['severity'] . '): ' . $f['what'] ); ?></li><?php endforeach; ?>
+                </ul>
+                <?php if ( isset( $open[ $last['group_id'] ] ) ) : ?>
+                    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="seo-pilot-rollback">
+                        <input type="hidden" name="action" value="seo_pilot_rollback_group"><input type="hidden" name="group_id" value="<?php echo esc_attr( $last['group_id'] ); ?>">
+                        <?php wp_nonce_field( 'seo_pilot_rollback_' . $last['group_id'] ); ?>
+                        <?php if ( $live ) : ?><label><input type="checkbox" name="confirm_live" value="1"> <?php esc_html_e( 'I confirm the live page should be rolled back.', 'seo-pilot' ); ?></label><br><?php endif; ?>
+                        <?php submit_button( __( 'Roll back this run', 'seo-pilot' ), 'regressed' === $v['verdict'] ? 'primary' : 'delete', 'submit', false ); ?>
+                    </form>
+                <?php endif; ?>
+                <hr>
+            <?php endif; ?>
+
+            <h3><?php esc_html_e( '1. Fixes available for this page', 'seo-pilot' ); ?></h3>
+            <?php if ( ! $fixes ) : ?>
+                <p><?php esc_html_e( 'None of this page\'s current findings has a fix the assistant can prepare. Findings that need a person (for example content or language decisions) are listed in the checklist below.', 'seo-pilot' ); ?></p>
+            <?php else : ?>
+                <?php self::form_open( 'fix_prepare', $post->ID, 'fixprep' ); ?>
+                    <?php foreach ( $areas as $label => $list ) : ?>
+                        <fieldset class="seo-pilot-fixgroup"><legend><strong><?php echo esc_html( $label ); ?></strong></legend>
+                            <?php foreach ( $list as $fx ) : ?>
+                                <p>
+                                    <label><input type="checkbox" name="fix[]" value="<?php echo esc_attr( $fx['id'] ); ?>" <?php checked( $fx['checked'] ); disabled( ! $fx['available'] ); ?>> <?php echo esc_html( $fx['label'] ); ?></label>
+                                    <?php echo self::badge( 'Class ' . $fx['risk'], 'muted' ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+                                    <br><span class="description" dir="auto"><?php echo esc_html( 'Because: ' . implode( ' · ', $fx['reasons'] ) ); ?></span>
+                                    <br><span class="description"><?php echo esc_html( $fx['available'] ? $fx['risk_text'] : 'Not available: ' . $fx['unavailable'] ); ?></span>
+                                </p>
+                            <?php endforeach; ?>
+                        </fieldset>
+                    <?php endforeach; ?>
+                    <p class="description"><?php esc_html_e( 'Ticked by default: fixes that use text you already have or fill an empty field. Fixes that replace text a person wrote are left unticked. AI drafts are requested only when you press the button below and use the AI settings you confirmed.', 'seo-pilot' ); ?></p>
+                    <?php submit_button( __( 'Prepare selected fixes', 'seo-pilot' ), 'secondary', 'submit', false ); ?>
+                </form>
+            <?php endif; ?>
+
+            <h3><?php esc_html_e( '2. Proposed changes', 'seo-pilot' ); ?></h3>
+            <?php if ( ! $props ) : ?>
+                <p class="description"><?php esc_html_e( 'Nothing is waiting. Prepare fixes above, and the proposals appear here.', 'seo-pilot' ); ?></p>
+            <?php else : ?>
+                <?php self::form_open( 'fix_apply', $post->ID, 'fixapply' ); ?>
+                    <table class="widefat striped seo-pilot-fixtable">
+                        <thead><tr><th scope="col"><?php esc_html_e( 'Apply', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Change', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Check before applying', 'seo-pilot' ); ?></th></tr></thead>
+                        <tbody>
+                        <?php foreach ( $props as $r ) : $notes = array_merge( $r['flags']['verify'], $r['flags']['notes'] ); ?>
+                            <tr>
+                                <td><input type="checkbox" name="rec[]" value="<?php echo esc_attr( (string) $r['id'] ); ?>" id="sp-fx-<?php echo esc_attr( (string) $r['id'] ); ?>" <?php checked( SEO_Pilot_Fixes::rec_checked( $r ) ); ?>>
+                                    <label class="screen-reader-text" for="sp-fx-<?php echo esc_attr( (string) $r['id'] ); ?>"><?php echo esc_html( 'Apply: ' . SEO_Pilot_Recs::type_label( $r['rec_type'] ) ); ?></label></td>
+                                <td dir="auto"><strong><?php echo esc_html( SEO_Pilot_Recs::type_label( $r['rec_type'] ) ); ?></strong>
+                                    <?php echo self::badge( 'user' === $r['source'] ? 'written by you' : ( 'local' === $r['source'] ? 'from your Media Library, no AI' : 'AI draft' ), 'muted' ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+                                    <br><?php echo self::fix_change_html( $r ); // phpcs:ignore WordPress.Security.EscapeOutput -- built from escaped parts. ?></td>
+                                <td dir="auto"><?php if ( $notes ) : ?><ul class="seo-pilot-evidence"><?php foreach ( $notes as $n ) : ?><li><?php echo esc_html( $n ); ?></li><?php endforeach; ?></ul><?php else : ?><span class="description">—</span><?php endif; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <p class="description"><?php esc_html_e( 'To edit a proposal or reject it, use "Recommendations to review" further down; the same proposals appear there.', 'seo-pilot' ); ?></p>
+                    <h3><?php esc_html_e( '3. Apply and verify', 'seo-pilot' ); ?></h3>
+                    <p><label><input type="radio" name="mode" value="live" checked> <?php esc_html_e( 'Update this page now', 'seo-pilot' ); ?></label><br>
+                       <label><input type="radio" name="mode" value="draft_copy"> <?php esc_html_e( 'Save as a new draft copy instead (the page is not changed, so there is nothing to verify)', 'seo-pilot' ); ?></label></p>
+                    <?php if ( $live ) : ?><p><label><input type="checkbox" name="confirm_live" value="1"> <?php esc_html_e( 'This page is live. I have reviewed the changes above and I confirm it should be updated.', 'seo-pilot' ); ?></label></p><?php endif; ?>
+                    <?php if ( $third ) : ?><p><label><input type="checkbox" name="confirm_owner" value="1"> <?php echo esc_html( sprintf( '%s controls the SEO title and description. I allow SEO Pilot to write to its fields.', SEO_Pilot_Compat::label( SEO_Pilot_Compat::owner() ) ) ); ?></label></p><?php endif; ?>
+                    <?php submit_button( __( 'Apply selected changes', 'seo-pilot' ), 'primary', 'submit', false ); ?>
+                    <span class="description"> <?php esc_html_e( 'A WordPress revision is saved first, the change is logged in History, and the audit is re-run to check the result.', 'seo-pilot' ); ?></span>
+                </form>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    private static function lang_source_text( array $li ) {
+        switch ( $li['source'] ) {
+            case 'polylang': return __( 'set in Polylang', 'seo-pilot' );
+            case 'wpml':     return __( 'set in WPML', 'seo-pilot' );
+            case 'filter':   return __( 'provided by custom code', 'seo-pilot' );
+            case 'manual':   return __( 'set by you in SEO Pilot', 'seo-pilot' );
+            default:         return __( 'not set for this page: the site language is assumed', 'seo-pilot' );
+        }
+    }
+
+    private static function section_language( WP_Post $post, array $audit ) {
+        $li      = SEO_Pilot_Lang::for_post( $post->ID );
+        $plugins = $li['plugins'];
+        $manual  = '' === $li['managed_by'];
+        $langs   = SEO_Pilot_Lang::site_languages();
+        // Nothing to show on a single-language site that has not set anything up.
+        if ( ! $langs && ! $plugins && ! $li['declared'] ) {
+            ?>
+            <div class="seo-pilot-panel seo-pilot-language">
+                <h2><?php esc_html_e( 'Language and translations', 'seo-pilot' ); ?></h2>
+                <p class="description"><?php esc_html_e( 'This site has no languages set up. If you publish pages in more than one language, add them under SEO Pilot → Settings → Languages; this panel then lets you set each page\'s language and link its translations.', 'seo-pilot' ); ?></p>
+            </div>
+            <?php
+            return;
+        }
+        $used = array( SEO_Pilot_Hreflang::lang_part( $li['code'] ) => true );
+        foreach ( $li['members'] as $mc => $m ) { $used[ SEO_Pilot_Hreflang::lang_part( $mc ) ] = true; }
+        $candidates = array();
+        if ( $manual ) {
+            $exclude = array_merge( array( $post->ID ), SEO_Pilot_Lang::translation_ids( $li ) );
+            foreach ( get_posts( array( 'post_type' => SEO_Pilot_Util::content_post_types(), 'post_status' => array( 'publish', 'draft', 'pending', 'future', 'private' ), 'posts_per_page' => 200, 'orderby' => 'title', 'order' => 'ASC', 'post__not_in' => $exclude, 'no_found_rows' => true ) ) as $cp ) {
+                $own = SEO_Pilot_Hreflang::normalize_code( (string) get_post_meta( $cp->ID, SEO_Pilot_Lang::META_LANG, true ) );
+                $candidates[] = array( 'id' => $cp->ID, 'title' => self::title_of( $cp ), 'lang' => $own );
+            }
+        }
+        ?>
+        <div class="seo-pilot-panel seo-pilot-language">
+            <h2><?php esc_html_e( 'Language and translations', 'seo-pilot' ); ?></h2>
+            <p><strong><?php echo esc_html( sprintf( '%s (%s)', $li['label'], $li['code'] ) ); ?></strong>
+                <span class="description"> — <?php echo esc_html( self::lang_source_text( $li ) . '; ' . ( 'rtl' === $li['dir'] ? 'right to left' : 'left to right' ) ); ?></span></p>
+            <?php if ( $plugins ) : ?>
+                <p class="description"><?php echo esc_html( sprintf( '%s is active. Languages and translations are managed there; SEO Pilot reads them and checks the result. Use "Check live output" below to verify the hreflang tags the plugin prints.', implode( ', ', array_map( array( 'SEO_Pilot_Lang', 'plugin_label' ), $plugins ) ) ) ); ?></p>
+                <?php if ( ! $li['declared'] ) : ?>
+                    <p class="description"><?php esc_html_e( 'This plugin translates pages on the fly instead of keeping separate pages, so SEO Pilot only sees the original-language page here. Edit the translated titles and descriptions in the plugin\'s own translation editor; "Check live output" can fetch the page in each language.', 'seo-pilot' ); ?></p>
+                <?php endif; ?>
+            <?php endif; ?>
+
+            <?php if ( $li['members'] ) : ?>
+                <table class="widefat striped seo-pilot-trans">
+                    <thead><tr>
+                        <th scope="col"><?php esc_html_e( 'Language', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Page', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Status', 'seo-pilot' ); ?></th>
+                        <th scope="col"><?php esc_html_e( 'SEO title', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Keyword', 'seo-pilot' ); ?></th>
+                    </tr></thead>
+                    <tbody>
+                    <?php foreach ( $li['members'] as $mc => $m ) : ?>
+                        <tr>
+                            <td><?php echo esc_html( SEO_Pilot_Lang::label( $mc ) . ' (' . $mc . ')' ); ?></td>
+                            <td dir="auto"><a href="<?php echo esc_url( admin_url( 'admin.php?page=seo-pilot-content&post_id=' . (int) $m['id'] ) ); ?>"><?php echo esc_html( $m['title'] ); ?></a></td>
+                            <td><?php echo esc_html( self::status_label( $m['status'] ) ); ?></td>
+                            <td dir="auto"><?php echo '' !== $m['seo_title'] ? esc_html( $m['seo_title'] ) : '<span class="description">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+                            <td dir="auto"><?php echo '' !== $m['keyword'] ? esc_html( $m['keyword'] ) : '<span class="description">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+
+            <?php if ( $manual ) : ?>
+                <h3><?php esc_html_e( 'This page\'s language', 'seo-pilot' ); ?></h3>
+                <?php self::form_open( 'save_lang', $post->ID, 'lang', 'seo-pilot-inline' ); ?>
+                    <label class="screen-reader-text" for="sp-lang"><?php esc_html_e( 'Language of this page', 'seo-pilot' ); ?></label>
+                    <?php if ( $langs ) : ?>
+                        <select id="sp-lang" name="lang">
+                            <option value=""><?php esc_html_e( '— not set —', 'seo-pilot' ); ?></option>
+                            <?php $cur = 'manual' === $li['source'] ? $li['code'] : ''; $listed = false; foreach ( $langs as $l ) : $listed = $listed || $l['code'] === $cur; ?>
+                                <option value="<?php echo esc_attr( $l['code'] ); ?>" <?php selected( $cur, $l['code'] ); ?>><?php echo esc_html( SEO_Pilot_Lang::label( $l['code'] ) . ' (' . $l['code'] . ')' ); ?></option>
+                            <?php endforeach; ?>
+                            <?php if ( '' !== $cur && ! $listed ) : ?><option value="<?php echo esc_attr( $cur ); ?>" selected><?php echo esc_html( $cur ); ?></option><?php endif; ?>
+                        </select>
+                    <?php else : ?>
+                        <input id="sp-lang" type="text" name="lang" dir="ltr" class="small-text" maxlength="12" value="<?php echo esc_attr( 'manual' === $li['source'] ? $li['code'] : '' ); ?>" placeholder="ar">
+                    <?php endif; ?>
+                    <?php submit_button( __( 'Save language', 'seo-pilot' ), 'secondary small', 'submit', false ); ?>
+                </form>
+
+                <?php if ( 'manual' === $li['source'] ) : ?>
+                    <h3><?php esc_html_e( 'Translations', 'seo-pilot' ); ?></h3>
+                    <?php
+                    $any = false;
+                    foreach ( $langs as $l ) :
+                        if ( isset( $used[ SEO_Pilot_Hreflang::lang_part( $l['code'] ) ] ) ) { continue; }
+                        $any = true;
+                        $fid = 'sp-link-' . preg_replace( '/[^a-z0-9]/i', '', $l['code'] );
+                        self::form_open( 'link_trans', $post->ID, 'linktrans', 'seo-pilot-inline' ); ?>
+                            <input type="hidden" name="lang" value="<?php echo esc_attr( $l['code'] ); ?>">
+                            <label for="<?php echo esc_attr( $fid ); ?>"><?php echo esc_html( 'The ' . SEO_Pilot_Lang::label( $l['code'] ) . ' version of this page:' ); ?></label>
+                            <select id="<?php echo esc_attr( $fid ); ?>" name="other_id">
+                                <?php foreach ( $candidates as $c ) : if ( '' !== $c['lang'] && SEO_Pilot_Hreflang::lang_part( $c['lang'] ) !== SEO_Pilot_Hreflang::lang_part( $l['code'] ) ) { continue; } ?>
+                                    <option value="<?php echo esc_attr( (string) $c['id'] ); ?>"><?php echo esc_html( $c['title'] ); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <?php submit_button( __( 'Link', 'seo-pilot' ), 'secondary small', 'submit', false ); ?>
+                        </form>
+                    <?php endforeach; ?>
+                    <?php if ( ! $any && ! $langs ) : ?><p class="description"><?php esc_html_e( 'Add your languages under Settings → Languages to link translations.', 'seo-pilot' ); ?></p><?php endif; ?>
+                    <?php if ( $li['members'] ) : ?>
+                        <?php self::form_open( 'unlink_trans', $post->ID, 'unlinktrans', 'seo-pilot-inline' ); ?>
+                            <?php submit_button( __( 'Remove this page from its translation group', 'seo-pilot' ), 'link-delete small', 'submit', false ); ?>
+                        </form>
+                    <?php endif; ?>
+                    <p class="description"><?php esc_html_e( 'Linking does not change either page. Choosing a page that has no language yet gives it the language shown. A page can only be linked to one page per language.', 'seo-pilot' ); ?></p>
+                <?php endif; ?>
+            <?php endif; ?>
+
+            <?php
+            $tags = array();
+            if ( $manual && ! SEO_Pilot_Lang::owns_hreflang() ) {
+                $tags = SEO_Pilot_Hreflang::tags( SEO_Pilot_Lang::indexable_members( $li ), SEO_Pilot_Lang::default_language() );
+            }
+            ?>
+            <h3><?php esc_html_e( 'hreflang', 'seo-pilot' ); ?></h3>
+            <?php if ( SEO_Pilot_Lang::owns_hreflang() ) : ?>
+                <p class="description"><?php esc_html_e( 'Printed by your translation plugin. SEO Pilot does not print hreflang while such a plugin is active.', 'seo-pilot' ); ?></p>
+            <?php elseif ( ! SEO_Pilot_Settings::get( 'hreflang_output', 0 ) ) : ?>
+                <p class="description"><?php echo esc_html( $tags ? 'SEO Pilot would print the tags below for this page, but hreflang output is switched off in Settings → Languages.' : 'hreflang output is switched off (Settings → Languages), and this page has no published, indexable translation to list.' ); ?></p>
+            <?php else : ?>
+                <p class="description"><?php echo esc_html( $tags ? 'SEO Pilot prints these tags on this page:' : 'Nothing is printed for this page: it needs at least one published, indexable translation.' ); ?></p>
+            <?php endif; ?>
+            <?php if ( $tags ) : ?><pre class="seo-pilot-preview" dir="ltr"><?php echo esc_html( SEO_Pilot_Hreflang::render( $tags ) ); ?></pre><?php endif; ?>
+        </div>
+        <?php
+    }
+
+    private static function basis_label( $basis ) {
+        $m = array(
+            'measured'  => __( 'Measured by the plugin', 'seo-pilot' ),
+            'estimate'  => __( 'Estimate', 'seo-pilot' ),
+            'heuristic' => __( 'Rule of thumb', 'seo-pilot' ),
+        );
+        return isset( $m[ $basis ] ) ? $m[ $basis ] : $basis;
+    }
+
+    private static function section_title( array $audit ) {
+        $ta = isset( $audit['title_analysis'] ) && is_array( $audit['title_analysis'] ) ? $audit['title_analysis'] : null;
+        ?>
+        <div class="seo-pilot-panel seo-pilot-title-analysis">
+            <h2><?php esc_html_e( 'Title analysis', 'seo-pilot' ); ?></h2>
+            <?php if ( ! $ta ) : ?>
+                <p><?php esc_html_e( 'This audit was created before title analysis existed. Use "Refresh audit" above to see it.', 'seo-pilot' ); ?></p>
+            <?php elseif ( empty( $ta['analyzed'] ) && empty( $ta['checks'] ) ) : ?>
+                <p><?php esc_html_e( 'There is no title to analyse yet.', 'seo-pilot' ); ?></p>
+            <?php else : ?>
+                <p class="description"><?php esc_html_e( 'Each line says how it was produced. "Measured" means counted or compared by code. "Estimate" is an approximation. "Rule of thumb" is a prompt to look, not a requirement: no tool knows how Google will treat your title.', 'seo-pilot' ); ?></p>
+                <p dir="auto"><strong><?php echo esc_html( $ta['title'] ); ?></strong>
+                    <span class="description"> — <?php echo esc_html( 'seo_title' === $ta['source'] ? __( 'the SEO title', 'seo-pilot' ) : __( 'the page title (no separate SEO title is set)', 'seo-pilot' ) ); ?></span></p>
+                <?php if ( ! empty( $ta['metrics'] ) ) : ?>
+                    <p class="description"><?php echo esc_html( sprintf( '%d characters; estimated width about %d–%d px (a typical desktop result shows about %d px).', $ta['metrics']['chars'], $ta['metrics']['px_low'], $ta['metrics']['px_high'], $ta['metrics']['px_limit'] ) ); ?></p>
+                <?php endif; ?>
+                <?php if ( ! empty( $ta['opportunities'] ) ) : ?>
+                    <h3><?php esc_html_e( 'Worth a look', 'seo-pilot' ); ?></h3>
+                    <ul class="seo-pilot-opportunities">
+                        <?php foreach ( $ta['opportunities'] as $o ) : ?>
+                            <li dir="auto"><?php echo self::badge( self::basis_label( $o['basis'] ), 'muted' ); // phpcs:ignore WordPress.Security.EscapeOutput ?> <?php echo esc_html( $o['text'] ); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php elseif ( ! empty( $ta['analyzed'] ) ) : ?>
+                    <p><?php esc_html_e( 'None of the checks below flagged anything.', 'seo-pilot' ); ?></p>
+                <?php endif; ?>
+                <details><summary><?php esc_html_e( 'Show every title check', 'seo-pilot' ); ?></summary>
+                    <table class="widefat striped">
+                        <thead><tr><th scope="col"><?php esc_html_e( 'Check', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Result', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'How it was produced', 'seo-pilot' ); ?></th><th scope="col"><?php esc_html_e( 'Detail', 'seo-pilot' ); ?></th></tr></thead>
+                        <tbody>
+                        <?php foreach ( $ta['checks'] as $c ) : ?>
+                            <tr>
+                                <td dir="auto"><?php echo esc_html( $c['label'] ); ?></td>
+                                <td><?php echo self::badge( self::status_text( $c['status'] ), 'check-' . $c['status'] ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+                                <td><?php echo esc_html( self::basis_label( $c['basis'] ) ); ?></td>
+                                <td dir="auto"><?php echo esc_html( $c['detail'] ); ?>
+                                    <?php if ( ! empty( $c['evidence'] ) ) : ?><ul class="seo-pilot-evidence"><?php foreach ( $c['evidence'] as $ev ) : ?><li><?php echo esc_html( $ev ); ?></li><?php endforeach; ?></ul><?php endif; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </details>
+                <p class="description"><?php esc_html_e( 'For a qualitative review (clarity, specificity, alternative wording) tick "Title review" under AI recommendations. That part is written by the AI model and is advice only.', 'seo-pilot' ); ?></p>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
     private static function section_findings( array $audit ) {
         $intent = $audit['intent'];
         ?>
@@ -290,26 +604,100 @@ final class SEO_Pilot_Workspace_View {
         <?php
     }
 
+    private static function issue_label( $basis ) {
+        return 'measured' === $basis ? __( 'Measured', 'seo-pilot' ) : ( 'heuristic' === $basis ? __( 'Rule of thumb', 'seo-pilot' ) : $basis );
+    }
+
     private static function section_alt( WP_Post $post, array $audit ) {
-        $ev = array();
-        foreach ( $audit['findings'] as $f ) { if ( 'alt_missing' === $f['id'] ) { $ev = $f['evidence']; } }
-        if ( ! $ev ) { return; }
-        $existing = array();
-        foreach ( SEO_Pilot_Recs::for_post( $post->ID, array( 'accepted' ) ) as $r ) { if ( 'alt_text' === $r['rec_type'] ) { $existing[ substr( $r['target'], 4 ) ] = $r['proposed']; } }
+        $ia = isset( $audit['image_analysis'] ) && is_array( $audit['image_analysis'] ) ? $audit['image_analysis'] : null;
+        if ( ! $ia ) {
+            echo '<div class="seo-pilot-panel"><h2>' . esc_html__( 'Images and alt text', 'seo-pilot' ) . '</h2><p>' . esc_html__( 'This audit was created before the image tools existed. Use "Refresh audit" above to see them.', 'seo-pilot' ) . '</p></div>';
+            return;
+        }
+        if ( empty( $ia['items'] ) && empty( $ia['featured'] ) ) { return; }
+        $c     = $ia['counts'];
+        $rows  = array_values( array_filter( $ia['items'], function ( $it ) { return ! empty( $it['needs_attention'] ); } ) );
+        $existing = array(); $deco_saved = array();
+        foreach ( SEO_Pilot_Recs::for_post( $post->ID, array( 'accepted' ) ) as $r ) {
+            if ( 'alt_text' === $r['rec_type'] ) { $existing[ substr( $r['target'], 4 ) ] = $r['proposed']; if ( ! empty( $r['flags']['decorative'] ) ) { $deco_saved[ substr( $r['target'], 4 ) ] = true; } }
+        }
+        $has_lib = false;
+        foreach ( $rows as $it ) { if ( in_array( $it['kind'], array( 'missing', 'empty_in_link' ), true ) && '' !== $it['library_alt'] ) { $has_lib = true; } }
+        $ai_problem = SEO_Pilot_Settings::images_problem();
+        $ai_count   = '' === $ai_problem ? count( SEO_Pilot_Alt_AI::candidates( $post, $audit ) ) : 0;
         ?>
-        <div class="seo-pilot-panel">
-            <h2><?php esc_html_e( 'Image alt text — needs your input', 'seo-pilot' ); ?></h2>
-            <p><?php esc_html_e( 'SEO Pilot cannot see your images and will not guess what they show. Describe each image in a short phrase (leave blank to skip). What you type is saved as accepted, but is only applied when you confirm in "Apply accepted changes".', 'seo-pilot' ); ?></p>
-            <?php self::form_open( 'save_alt', $post->ID, 'alt' ); ?>
-                <table class="widefat striped">
-                    <?php foreach ( $ev as $e ) : ?>
-                        <tr><td class="seo-pilot-img-src"><code dir="ltr"><?php echo esc_html( SEO_Pilot_Text::len( $e['src'] ) > 70 ? '…' . SEO_Pilot_Text::sub( $e['src'], -60 ) : $e['src'] ); ?></code>
-                            <?php if ( '' !== $e['context'] ) : ?><br><span class="description" dir="auto"><?php echo esc_html( 'Near the heading: ' . $e['context'] ); ?></span><?php endif; ?></td>
-                            <td><input type="text" class="large-text" dir="auto" maxlength="300" name="alt[<?php echo esc_attr( $e['hash'] ); ?>]" value="<?php echo esc_attr( isset( $existing[ $e['hash'] ] ) ? $existing[ $e['hash'] ] : '' ); ?>" aria-label="<?php esc_attr_e( 'Alt text', 'seo-pilot' ); ?>"></td></tr>
-                    <?php endforeach; ?>
-                </table>
-                <?php submit_button( __( 'Save alt text as accepted', 'seo-pilot' ), 'secondary', 'submit', false ); ?>
-            </form>
+        <div class="seo-pilot-panel seo-pilot-images">
+            <h2><?php esc_html_e( 'Images and alt text', 'seo-pilot' ); ?></h2>
+            <p><strong><?php echo esc_html( sprintf( '%d image(s): %d without alt text, %d linked with empty alt, %d to review, %d decorative (empty alt on purpose), %d look fine.', $c['images'], $c['missing'], $c['empty_in_link'], $c['review'], $c['decorative'], $c['ok'] ) ); ?></strong></p>
+            <p class="description"><?php esc_html_e( 'Alt text is first an accessibility field: it tells people who cannot see an image what it shows. Keep it short and specific, and do not use it for keywords. "Measured" lines were found by comparing or counting; "Rule of thumb" lines are prompts to look, not requirements.', 'seo-pilot' ); ?></p>
+            <?php if ( ! empty( $ia['featured'] ) ) : ?>
+                <p><?php echo esc_html( '' === $ia['featured']['alt'] ? __( 'The featured image has no alt text in the Media Library. Add it in Media → Library; SEO Pilot does not edit Media Library entries.', 'seo-pilot' ) : __( 'The featured image has alt text in the Media Library.', 'seo-pilot' ) ); ?></p>
+            <?php endif; ?>
+            <?php if ( ! $rows ) : ?>
+                <p><?php esc_html_e( 'No alt-text problems were found in this page\'s content.', 'seo-pilot' ); ?></p>
+            <?php else : ?>
+                <p><?php esc_html_e( 'Write the alt text yourself, or mark an image decorative if it adds no information. What you save is stored as accepted, but is only applied when you confirm in "Apply accepted changes".', 'seo-pilot' ); ?></p>
+                <?php self::form_open( 'save_alt', $post->ID, 'alt' ); ?>
+                    <table class="widefat striped seo-pilot-imgtable">
+                        <thead><tr>
+                            <th scope="col"><?php esc_html_e( 'Image', 'seo-pilot' ); ?></th>
+                            <th scope="col"><?php esc_html_e( 'What was found', 'seo-pilot' ); ?></th>
+                            <th scope="col"><?php esc_html_e( 'New alt text', 'seo-pilot' ); ?></th>
+                        </tr></thead>
+                        <tbody>
+                        <?php foreach ( $rows as $it ) :
+                            $h = $it['hash'];
+                            $in_id = 'sp-alt-' . substr( $h, 0, 12 );
+                            ?>
+                            <tr>
+                                <td class="seo-pilot-img-src">
+                                    <img class="seo-pilot-thumb" src="<?php echo esc_url( $it['src'] ); ?>" alt="" loading="lazy" width="80">
+                                    <code dir="ltr"><?php echo esc_html( SEO_Pilot_Images::label( $it['src'] ) ); ?></code>
+                                    <?php if ( '' !== $it['context'] ) : ?><br><span class="description" dir="auto"><?php echo esc_html( 'Under the heading: ' . $it['context'] ); ?></span><?php endif; ?>
+                                    <?php if ( '' !== $it['caption'] ) : ?><br><span class="description" dir="auto"><?php echo esc_html( 'Caption: ' . $it['caption'] ); ?></span><?php endif; ?>
+                                </td>
+                                <td>
+                                    <p dir="auto"><?php echo esc_html( $it['has_alt'] ? ( '' === $it['alt'] ? __( 'Current alt text: empty', 'seo-pilot' ) : 'Current alt text: "' . $it['alt'] . '"' ) : __( 'Current alt text: none (no alt attribute)', 'seo-pilot' ) ); ?></p>
+                                    <ul class="seo-pilot-evidence">
+                                        <?php foreach ( $it['issues'] as $is ) : ?>
+                                            <li dir="auto"><?php echo self::badge( self::issue_label( $is['basis'] ), 'muted' ); // phpcs:ignore WordPress.Security.EscapeOutput ?> <?php echo esc_html( $is['text'] ); ?></li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </td>
+                                <td>
+                                    <label class="screen-reader-text" for="<?php echo esc_attr( $in_id ); ?>"><?php echo esc_html( 'New alt text for ' . SEO_Pilot_Images::label( $it['src'] ) ); ?></label>
+                                    <input id="<?php echo esc_attr( $in_id ); ?>" type="text" class="large-text" dir="auto" maxlength="300" name="alt[<?php echo esc_attr( $h ); ?>]" value="<?php echo esc_attr( isset( $existing[ $h ] ) ? $existing[ $h ] : '' ); ?>">
+                                    <?php if ( 'empty_in_link' === $it['kind'] ) : ?>
+                                        <p class="description"><?php esc_html_e( 'Describe where the link goes. This image cannot be marked decorative because the link has no other text.', 'seo-pilot' ); ?></p>
+                                    <?php else : ?>
+                                        <label><input type="checkbox" name="decorative[<?php echo esc_attr( $h ); ?>]" value="1" <?php checked( isset( $deco_saved[ $h ] ) ); ?>> <?php esc_html_e( 'Decorative: adds no information (saves an empty alt)', 'seo-pilot' ); ?></label>
+                                    <?php endif; ?>
+                                    <?php if ( '' !== $it['library_alt'] ) : ?><p class="description" dir="auto"><?php echo esc_html( 'Media Library alt text: "' . $it['library_alt'] . '"' ); ?></p><?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <p><?php submit_button( __( 'Save alt text as accepted', 'seo-pilot' ), 'secondary', 'submit', false ); ?></p>
+                </form>
+                <?php if ( $has_lib ) : ?>
+                    <?php self::form_open( 'alt_library', $post->ID, 'altlib' ); ?>
+                        <p class="description"><?php esc_html_e( 'Some of these images already have alt text in your Media Library. This proposes that text for review. No AI is used and nothing is sent anywhere.', 'seo-pilot' ); ?></p>
+                        <?php submit_button( __( 'Suggest Media Library alt text', 'seo-pilot' ), 'secondary', 'submit', false ); ?>
+                    </form>
+                <?php endif; ?>
+                <h3><?php esc_html_e( 'AI draft (optional)', 'seo-pilot' ); ?></h3>
+                <?php if ( '' !== $ai_problem ) : ?>
+                    <p class="description"><?php echo esc_html( $ai_problem ); ?> <a href="<?php echo esc_url( admin_url( 'admin.php?page=seo-pilot-settings' ) ); ?>"><?php esc_html_e( 'Open Settings', 'seo-pilot' ); ?></a></p>
+                <?php elseif ( ! $ai_count ) : ?>
+                    <p class="description"><?php esc_html_e( 'No image here can be drafted: AI drafts need Media Library images that have no usable alt text and no pending or accepted entry yet.', 'seo-pilot' ); ?></p>
+                <?php else : ?>
+                    <?php self::form_open( 'generate_alt', $post->ID, 'altai' ); ?>
+                        <p><?php echo esc_html( sprintf( '%1$d image(s) from this page will be resized and sent to %2$s (model %3$s) when you press the button, with the page title, section heading, caption and link text. Your keywords are not sent. The AI writes drafts only; you review each one.', $ai_count, SEO_Pilot_Settings::provider_host(), SEO_Pilot_Settings::get( 'model', '' ) ) ); ?></p>
+                        <?php submit_button( __( 'Draft alt text with AI', 'seo-pilot' ), 'secondary', 'submit', false ); ?>
+                    </form>
+                <?php endif; ?>
+            <?php endif; ?>
         </div>
         <?php
     }
@@ -368,7 +756,7 @@ final class SEO_Pilot_Workspace_View {
                 </details>
                 <?php self::form_open( 'generate', $post->ID, 'generate' ); ?>
                     <fieldset class="seo-pilot-tasks"><legend class="screen-reader-text"><?php esc_html_e( 'What to generate', 'seo-pilot' ); ?></legend>
-                        <?php foreach ( SEO_Pilot_Prompt::tasks() as $key => $label ) : ?>
+                        <?php foreach ( SEO_Pilot_Prompt::tasks() as $key => $label ) : if ( 'localize' === $key && empty( $ctx['localize_source'] ) ) { continue; } ?>
                             <label><input type="checkbox" name="tasks[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( in_array( $key, array( 'seo_title', 'meta_description', 'rewrite', 'outline', 'topics' ), true ) ); ?>> <?php echo esc_html( $label ); ?></label><br>
                         <?php endforeach; ?>
                     </fieldset>
@@ -440,7 +828,27 @@ final class SEO_Pilot_Workspace_View {
     private static function render_rec_applicable( array $r, $open ) {
         $type = $r['rec_type'];
         if ( 'alt_text' === $type ) {
-            echo '<p dir="auto">' . esc_html__( 'Add alt text to', 'seo-pilot' ) . ' <code dir="ltr">' . esc_html( $r['original'] ) . '</code>: <strong>' . esc_html( $r['proposed'] ) . '</strong></p>';
+            $deco    = ! empty( $r['flags']['decorative'] );
+            $replace = isset( $r['flags']['mode'] ) && 'replace' === $r['flags']['mode'];
+            $old     = isset( $r['flags']['old_alt'] ) ? (string) $r['flags']['old_alt'] : '';
+            echo '<p dir="auto"><img class="seo-pilot-thumb" src="' . esc_url( $r['original'] ) . '" alt="" loading="lazy" width="80"> <code dir="ltr">' . esc_html( SEO_Pilot_Images::label( $r['original'] ) ) . '</code></p>';
+            if ( $deco ) {
+                echo '<p dir="auto"><strong>' . esc_html__( 'Mark as decorative (empty alt text).', 'seo-pilot' ) . '</strong></p>';
+            } elseif ( $replace ) {
+                echo '<p dir="auto">' . esc_html__( 'Replace alt text', 'seo-pilot' ) . ' <del class="seo-pilot-del">' . esc_html( '' === $old ? __( '(empty)', 'seo-pilot' ) : $old ) . '</del> → <ins class="seo-pilot-ins">' . esc_html( $r['proposed'] ) . '</ins></p>'; // phpcs:ignore WordPress.Security.EscapeOutput -- every part escaped.
+            } else {
+                echo '<p dir="auto">' . esc_html__( 'Add alt text:', 'seo-pilot' ) . ' <strong>' . esc_html( $r['proposed'] ) . '</strong></p>';
+            }
+            if ( $open ) {
+                echo '<form method="post" class="seo-pilot-recform" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+                echo '<input type="hidden" name="action" value="seo_pilot_rec_action"><input type="hidden" name="rec_id" value="' . esc_attr( (string) $r['id'] ) . '">';
+                wp_nonce_field( 'seo_pilot_rec_' . $r['id'] );
+                echo '<label class="seo-pilot-label" for="sp-rec-' . esc_attr( (string) $r['id'] ) . '">' . esc_html__( 'Alt text (editable; leave empty only for a decorative image)', 'seo-pilot' ) . '</label>';
+                echo '<textarea id="sp-rec-' . esc_attr( (string) $r['id'] ) . '" class="large-text" dir="auto" rows="2" name="proposed">' . esc_textarea( $r['proposed'] ) . '</textarea>';
+                echo '<p class="description">' . esc_html( sprintf( '%d characters (a common guideline is about 125 or fewer). Describe what the image shows for someone who cannot see it; do not add keywords.', SEO_Pilot_Text::len( $r['proposed'] ) ) ) . '</p>';
+                self::rec_buttons_inner( $r, true );
+                echo '</form>';
+            }
             return;
         }
         $rtl = SEO_Pilot_Text::arabic_ratio( $r['proposed'] ) > 0.5 ? 'rtl' : 'auto';
@@ -474,6 +882,28 @@ final class SEO_Pilot_Workspace_View {
         if ( ! is_array( $d ) ) { return; }
         echo '<div class="seo-pilot-advice" dir="auto">';
         switch ( $r['rec_type'] ) {
+            case 'keywords_local':
+                if ( ! empty( $d['primary'] ) ) { echo '<p><strong>' . esc_html__( 'Primary keyword idea:', 'seo-pilot' ) . '</strong> <span dir="auto">' . esc_html( $d['primary'] ) . '</span></p>'; }
+                if ( ! empty( $d['secondary'] ) ) {
+                    echo '<p><strong>' . esc_html__( 'Secondary ideas:', 'seo-pilot' ) . '</strong></p><ul>';
+                    foreach ( $d['secondary'] as $k ) { echo '<li dir="auto">' . esc_html( $k ) . '</li>'; }
+                    echo '</ul>';
+                }
+                if ( ! empty( $d['reason'] ) ) { echo '<p dir="auto">' . esc_html( $d['reason'] ) . '</p>'; }
+                echo '<p class="description">' . esc_html__( 'These are not applied. Enter the phrases you decide to use under Page settings.', 'seo-pilot' ) . '</p>';
+                break;
+            case 'title_review':
+                if ( ! empty( $d['critique'] ) ) { echo '<p>' . esc_html( $d['critique'] ) . '</p>'; }
+                if ( ! empty( $d['alternatives'] ) ) {
+                    echo '<h4>' . esc_html__( 'Alternative titles (AI suggestions)', 'seo-pilot' ) . '</h4><ul>';
+                    foreach ( $d['alternatives'] as $alt ) {
+                        echo '<li><strong>' . esc_html( $alt['title'] ) . '</strong> <span class="description">(' . esc_html( sprintf( '%d characters', SEO_Pilot_Text::len( $alt['title'] ) ) ) . ')</span>';
+                        if ( '' !== $alt['reason'] ) { echo '<br>' . esc_html( $alt['reason'] ); }
+                        echo '</li>';
+                    }
+                    echo '</ul><p class="description">' . esc_html__( 'These are not applied. To use one, tick "SEO title" under AI recommendations (or edit the SEO title proposal) and accept it.', 'seo-pilot' ) . '</p>';
+                }
+                break;
             case 'outline':
                 echo '<ul class="seo-pilot-outline">';
                 foreach ( $d['items'] as $it ) {
@@ -564,7 +994,14 @@ final class SEO_Pilot_Workspace_View {
                         <?php if ( 'post_content' === $c['field'] ) :
                             foreach ( $c['rec_ids'] as $rid ) : $r = SEO_Pilot_Recs::get( $rid ); if ( ! $r ) { continue; } ?>
                                 <?php if ( 'alt_text' === $r['rec_type'] ) : ?>
-                                    <div class="seo-pilot-box" dir="auto"><?php echo esc_html( 'Add alt="' . $r['proposed'] . '" to ' . $r['original'] ); ?></div>
+                                    <div class="seo-pilot-box" dir="auto"><?php
+                                        $alt_deco = ! empty( $r['flags']['decorative'] );
+                                        if ( isset( $r['flags']['mode'] ) && 'replace' === $r['flags']['mode'] ) {
+                                            echo esc_html( 'Change alt="' . ( isset( $r['flags']['old_alt'] ) ? $r['flags']['old_alt'] : '' ) . '" to alt="' . ( $alt_deco ? '' : $r['proposed'] ) . '"' . ( $alt_deco ? ' (decorative)' : '' ) . ' on ' . $r['original'] );
+                                        } else {
+                                            echo esc_html( 'Add alt="' . ( $alt_deco ? '' : $r['proposed'] ) . '"' . ( $alt_deco ? ' (decorative)' : '' ) . ' to ' . $r['original'] );
+                                        }
+                                    ?></div>
                                 <?php else : ?>
                                     <div class="seo-pilot-box" dir="auto"><?php echo self::diff( $r['original'], SEO_Pilot_Validator::clean_inline( $r['proposed'] ) ); // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
                                 <?php endif; ?>
@@ -611,14 +1048,29 @@ final class SEO_Pilot_Workspace_View {
                 <p class="description"><?php esc_html_e( 'Available for published pages. It fetches the page from this site and reports its title tag, meta description, canonical, robots tag and H1 count; it changes nothing.', 'seo-pilot' ); ?></p>
             <?php else : ?>
                 <p class="description"><?php esc_html_e( 'Fetches the published page from this server (read-only) so you can confirm what search engines receive, and spot duplicate tags.', 'seo-pilot' ); ?></p>
-                <?php self::form_open( 'live_check', $post->ID, 'live' ); submit_button( __( 'Check live output', 'seo-pilot' ), 'secondary', 'submit', false ); echo '</form>'; ?>
+                <?php self::form_open( 'live_check', $post->ID, 'live' ); ?>
+                    <?php submit_button( __( 'Check live output', 'seo-pilot' ), 'secondary', 'submit', false ); ?>
+                    <button type="submit" name="deep" value="1" class="button"><?php esc_html_e( 'Check live output and its other-language pages', 'seo-pilot' ); ?></button>
+                    <span class="description"><?php esc_html_e( 'The second button also fetches up to 5 pages listed in this page\'s hreflang tags (this site only) to check that they link back.', 'seo-pilot' ); ?></span>
+                </form>
                 <?php if ( is_array( $live ) ) :
                     $md = SEO_Pilot_Compat::get( $post->ID, 'meta_description' );
                     $st = SEO_Pilot_Compat::get( $post->ID, 'seo_title' );
                     $notes = SEO_Pilot_Live_Check::notes( $live, $md['template_vars'] ? '' : $md['value'], $st['template_vars'] ? '' : $st['value'] );
+                    $li    = SEO_Pilot_Lang::for_post( $post->ID );
+                    $mem   = array();
+                    foreach ( SEO_Pilot_Lang::indexable_members( $li ) as $im ) { if ( $im['code'] !== $li['code'] ) { $mem[ $im['code'] ] = $im['url']; } }
+                    $mode  = SEO_Pilot_Lang::owns_hreflang() ? 'plugin' : ( SEO_Pilot_Settings::get( 'hreflang_output', 0 ) ? 'seo_pilot' : 'none' );
+                    $multi = ( $li['declared'] || ! empty( $live['hreflang'] ) || $li['plugins'] );
+                    $lnotes = $multi ? SEO_Pilot_Live_Check::lang_notes( $live, array( 'url' => $live['url'], 'code' => $li['code'], 'members' => $mem, 'mode' => $mode, 'expects' => (bool) $mem ) ) : array();
+                    $rnotes = ! empty( $live['alternates'] ) ? SEO_Pilot_Live_Check::reciprocity_notes( $live['url'], $live['alternates'] ) : array();
                     ?>
                     <p class="description"><?php echo esc_html( 'Fetched ' . $live['at'] . '.' ); ?></p>
                     <ul class="seo-pilot-livenotes"><?php foreach ( $notes as $n ) : ?><li class="live-<?php echo esc_attr( $n[0] ); ?>"><span dir="auto"><?php echo esc_html( $n[1] ); ?></span></li><?php endforeach; ?></ul>
+                    <?php if ( $lnotes || $rnotes ) : ?>
+                        <h3><?php esc_html_e( 'Language and hreflang', 'seo-pilot' ); ?></h3>
+                        <ul class="seo-pilot-livenotes"><?php foreach ( array_merge( $lnotes, $rnotes ) as $n ) : ?><li class="live-<?php echo esc_attr( $n[0] ); ?>"><span dir="auto"><?php echo esc_html( $n[1] ); ?></span></li><?php endforeach; ?></ul>
+                    <?php endif; ?>
                 <?php endif; ?>
             <?php endif; ?>
         </div>

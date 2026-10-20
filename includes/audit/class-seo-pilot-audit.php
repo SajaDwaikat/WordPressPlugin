@@ -8,7 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * count alone.
  */
 final class SEO_Pilot_Audit {
-    const ENGINE_VERSION = '1';
+    const ENGINE_VERSION = '2';
 
     const ASSESSMENT_NOTE = 'This assessment is a rule-based checklist built from the checks listed below. It is not a Google ranking factor, not a prediction of ranking success, and not a replacement for editorial judgement. Items marked "needs a human" cannot be judged by software.';
 
@@ -30,8 +30,15 @@ final class SEO_Pilot_Audit {
             'intent_user' => '', 'audience' => '', 'noindex' => array( 'noindex' => false, 'source' => '' ), 'site_noindex' => false,
             'cannibal' => array(), 'duplicates' => array( 'title' => array(), 'meta' => array() ),
             'site_host' => '', 'link_resolver' => null, 'year' => (int) gmdate( 'Y' ),
-            'similar' => array(), 'search_data' => null,
+            'similar' => array(), 'search_data' => null, 'site_name' => '', 'title_pool' => array(),
+            'image_data' => array( 'by_id' => array(), 'featured' => null ),
+            'lang_info' => array( 'code' => '', 'label' => '', 'dir' => 'ltr', 'source' => '', 'plugins' => array(), 'managed_by' => '', 'group' => '', 'declared' => false, 'members' => array(), 'site_languages' => array() ),
         ), $page );
+        // Word lists (stopwords, intent wording) exist for English and Arabic. For another declared language the checks that
+        // depend on them are skipped and reported as such, rather than run on the wrong lists.
+        if ( ! array_key_exists( 'lists_ok', $page ) ) {
+            $page['lists_ok'] = empty( $page['lang_info']['declared'] ) || SEO_Pilot_Text::lists_supported( $page['lang_info']['code'] );
+        }
 
         $r      = array( 'findings' => array(), 'checklist' => array() );
         $parsed = SEO_Pilot_Parser::parse( $page['content'] );
@@ -47,14 +54,16 @@ final class SEO_Pilot_Audit {
 
         self::check_indexing( $r, $page );
         self::check_meta( $r, $page, $title, $st_val, $md_val );
-        self::check_structure( $r, $parsed, $wc, $eff_title, $text );
+        self::check_structure( $r, $parsed, $wc, $eff_title, $text, $page['lists_ok'] );
         self::check_content( $r, $page, $parsed, $text, $wc, $words, $lang );
         self::check_readability( $r, $parsed, $text, $wc );
         $link_info = self::check_links( $r, $page, $parsed, $wc );
-        self::check_images( $r, $parsed );
+        $image_analysis = self::check_images( $r, $page, $parsed, $title );
 
         $kw     = $page['keywords'];
         $intent = self::check_keywords( $r, $page, $parsed, $text, $eff_title, $md_val, $kw );
+        $title_analysis = self::check_title_analysis( $r, $page, $parsed, $text, $wc, $title, $st_val, $kw, $intent );
+        $lang_info      = self::check_language( $r, $page, $text, $wc, $title, $st_val, $md_val, $kw );
         self::check_similar( $r, $page );
         self::check_search_data( $r, $page );
 
@@ -98,6 +107,9 @@ final class SEO_Pilot_Audit {
                 'meta_description' => array( 'value' => $md_val, 'owner_label' => $page['meta_description']['owner_label'] ),
             ),
             'intent'         => $intent,
+            'title_analysis' => $title_analysis,
+            'image_analysis' => $image_analysis,
+            'lang_info'      => $lang_info,
             'findings'       => $r['findings'],
             'checklist'      => $r['checklist'],
             'summary'        => array( 'checks' => $counts, 'severity' => $sev, 'total_findings' => count( $r['findings'] ), 'note' => self::ASSESSMENT_NOTE ),
@@ -221,9 +233,160 @@ final class SEO_Pilot_Audit {
         }
     }
 
+    /* ------------------------------------------------------ language */
+
+    /**
+     * Language and translation checks. All read-only and all heuristics about stored text: a person
+     * decides. Uses the language model (declared by a translation plugin or by the editor) when there
+     * is one; otherwise it only looks at the text.
+     *
+     * @return array Language info stored on the audit (no text sketches).
+     */
+    private static function check_language( array &$r, array $page, $text, $wc, $title, $st_val, $md_val, array $kw ) {
+        $li       = $page['lang_info'];
+        $code     = $li['code'];
+        $declared = ! empty( $li['declared'] );
+        $name     = '' !== $li['label'] ? $li['label'] : $code;
+        $script   = SEO_Pilot_Hreflang::script_class( $code );
+        $ratio    = SEO_Pilot_Text::arabic_ratio( $text );
+        $multi    = $declared || count( (array) $li['site_languages'] ) > 1 || ! empty( $li['plugins'] );
+
+        // 1. Does the text match the language the page is declared to be in?
+        if ( $declared && '' !== $script && $wc >= 30 ) {
+            $bad = ( 'arabic' === $script && $ratio < 0.15 ) || ( 'latin' === $script && $ratio >= 0.5 );
+            if ( $bad ) {
+                self::add( $r, 'lang_content_mismatch', 'medium', 'language', sprintf( 'The page is set to %s but its text looks like %s.', $name, 'arabic' === $script ? 'a different language (mostly Latin letters)' : 'Arabic script' ),
+                    'A page whose text does not match its language setting is often an untranslated copy or a page assigned to the wrong language. Search engines may show it to the wrong audience.',
+                    'Open the page and check whether it was translated, or whether its language setting is wrong. Mixed-language pages can be legitimate.', array( 'needs_human' => true ) );
+            }
+            self::check( $r, 'language', 'lang_content', 'Page text matches the page language', $bad ? 'warn' : 'pass', $bad ? 'Language set: ' . $name . '; text script suggests otherwise.' : 'Language set: ' . $name . '.' );
+        } elseif ( $multi && ! $declared ) {
+            self::check( $r, 'language', 'lang_content', 'Page text matches the page language', 'info', 'No language was set for this page, so the site language is assumed. Set it in the Language panel (or in your translation plugin).' );
+        }
+
+        // 2. Are the SEO title and meta description in the page's language (script level only)?
+        $expect = $declared ? $script : ( $wc >= 30 ? ( $ratio >= 0.5 ? 'arabic' : ( $ratio < 0.15 ? 'latin' : '' ) ) : '' );
+        if ( '' !== $expect ) {
+            $off = array();
+            foreach ( array( 'SEO title' => array( $st_val, ! empty( $page['seo_title']['template_vars'] ) ), 'meta description' => array( $md_val, ! empty( $page['meta_description']['template_vars'] ) ) ) as $label => $pair ) {
+                list( $val, $tv ) = $pair;
+                if ( '' === trim( $val ) || $tv || (int) preg_match_all( '/\p{L}/u', $val ) < 8 ) { continue; }
+                $rr = SEO_Pilot_Text::arabic_ratio( $val );
+                if ( ( 'arabic' === $expect && $rr < 0.15 ) || ( 'latin' === $expect && $rr >= 0.5 ) ) { $off[] = $label; }
+            }
+            if ( $off ) {
+                self::add( $r, 'lang_meta_mismatch', 'low', 'language', 'The ' . implode( ' and ', $off ) . ' ' . ( count( $off ) > 1 ? 'are' : 'is' ) . ' not in the same script as the page text.',
+                    'Titles and descriptions are shown in search results for this page. If they are in another language than the page, searchers see a mismatch.',
+                    'Check whether they were copied from another language version and need localising.', array( 'needs_human' => true, 'evidence' => $off ) );
+            }
+            self::check( $r, 'language', 'lang_meta', 'SEO title and description are in the page language', $off ? 'warn' : 'pass', $off ? implode( ', ', $off ) . ' differ in script.' : '' );
+        }
+
+        if ( $declared && empty( $page['lists_ok'] ) ) {
+            self::check( $r, 'language', 'lang_lists', 'Word lists exist for this language', 'info', 'SEO Pilot has built-in word lists for English and Arabic only. For ' . $name . ' the word-frequency, title-alignment and near-duplicate-title checks are skipped; keyword checks still work. A site can add words with the seo_pilot_stopwords filter.' );
+        }
+
+        // 3. Translations of this page.
+        $own_title = '' !== $st_val ? $st_val : $title;
+        $same_t = array(); $same_m = array(); $same_k = array(); $copy = array();
+        $own_sketch = $li['members'] ? SEO_Pilot_Similarity::sketch( $text ) : array();
+        foreach ( $li['members'] as $mc => $m ) {
+            $mn = ( SEO_Pilot_Hreflang::name( $mc ) ? SEO_Pilot_Hreflang::name( $mc ) : $mc );
+            $mt = '' !== $m['seo_title'] ? $m['seo_title'] : $m['title'];
+            if ( '' !== trim( $own_title ) && SEO_Pilot_Text::normalize( $mt ) === SEO_Pilot_Text::normalize( $own_title ) ) { $same_t[] = $mn; }
+            if ( '' !== trim( $md_val ) && '' !== $m['meta'] && SEO_Pilot_Text::normalize( $m['meta'] ) === SEO_Pilot_Text::normalize( $md_val ) ) { $same_m[] = $mn; }
+            if ( '' !== trim( (string) $kw['primary'] ) && '' !== $m['keyword'] && SEO_Pilot_Text::normalize( $m['keyword'] ) === SEO_Pilot_Text::normalize( (string) $kw['primary'] ) ) { $same_k[] = $mn; }
+            if ( ! empty( $m['sketch'] ) && $own_sketch ) {
+                $sim = SEO_Pilot_Similarity::jaccard( $own_sketch, $m['sketch'] );
+                if ( $sim >= 0.5 ) { $copy[] = $mn . ' (' . round( $sim * 100 ) . '% similar text)'; }
+            }
+        }
+        if ( $same_t ) {
+            self::add( $r, 'lang_title_identical', 'low', 'language', 'The title is identical to its ' . implode( ' and ', $same_t ) . ' version.',
+                'Translated pages normally need their own localised title. Brand names and loanwords can be identical, so this only asks you to look.',
+                'If the page is meant to serve a different language audience, write a title in that language.', array( 'needs_human' => true, 'evidence' => $same_t ) );
+        }
+        if ( $same_m ) {
+            self::add( $r, 'lang_meta_identical', 'low', 'language', 'The meta description is identical to its ' . implode( ' and ', $same_m ) . ' version.',
+                'A description copied between languages is shown to searchers who read the other language.', 'Write a description in this page\'s language.', array( 'needs_human' => true, 'evidence' => $same_m ) );
+        }
+        if ( $same_k ) {
+            self::add( $r, 'lang_keyword_identical', 'info', 'language', 'The primary keyword is identical to its ' . implode( ' and ', $same_k ) . ' version.',
+                'People search in their own language and with their own wording, so a keyword usually needs localising, not translating word for word. Brand names are the exception.',
+                'Choose the phrase people in this language would actually use.', array( 'needs_human' => true, 'evidence' => $same_k ) );
+        }
+        if ( $copy ) {
+            self::add( $r, 'lang_untranslated_copy', 'medium', 'language', 'The text is very similar to its translation: ' . implode( ' and ', $copy ) . '.',
+                'Two language versions with near-identical text are usually an untranslated copy. This compares stored text only and can be wrong for pages that share quotations or code.',
+                'Open both pages and check that one of them is really translated.', array( 'needs_human' => true, 'evidence' => $copy ) );
+        }
+        if ( $li['members'] || in_array( $li['managed_by'], array( 'polylang', 'wpml' ), true ) ) {
+            $have = array( SEO_Pilot_Hreflang::lang_part( $code ) );
+            foreach ( $li['members'] as $mc => $m ) { $have[] = SEO_Pilot_Hreflang::lang_part( $mc ); }
+            $missing = array();
+            foreach ( (array) $li['site_languages'] as $sc ) {
+                if ( ! in_array( SEO_Pilot_Hreflang::lang_part( $sc ), $have, true ) ) { $missing[] = SEO_Pilot_Hreflang::name( $sc ) ? SEO_Pilot_Hreflang::name( $sc ) : $sc; }
+            }
+            if ( $missing ) {
+                self::add( $r, 'lang_missing_translation', 'info', 'language', 'No translation was found in: ' . implode( ', ', $missing ) . '.',
+                    'Not every page needs every language. This only lists the languages in your Settings that this page does not have a version for.',
+                    'Create or link a translation only where it makes sense for your audience.', array( 'evidence' => $missing ) );
+            }
+            self::check( $r, 'language', 'lang_translations', 'Translations are linked', $li['members'] ? 'pass' : 'info', $li['members'] ? count( $li['members'] ) . ' translation(s) linked.' : 'No translation is linked to this page.' );
+        }
+
+        // Stored on the audit: no text sketches.
+        $out = $li;
+        foreach ( $out['members'] as $mc => $m ) { unset( $out['members'][ $mc ]['sketch'] ); }
+        return $out;
+    }
+
+    /* ------------------------------------------------------ title analysis */
+
+    /**
+     * Runs the detailed title analysis (SEO_Pilot_Title) and surfaces only the few results that add
+     * something the older checks do not: a width-based cut-off on a title that passes the character
+     * rule, near-duplicate titles, and placeholder-style titles. The full report is stored on the audit.
+     */
+    private static function check_title_analysis( array &$r, array $page, array $parsed, $text, $wc, $title, $st_val, array $kw, array $intent ) {
+        $ta = SEO_Pilot_Title::analyze( array(
+            'title' => $title, 'seo_title' => $st_val, 'template_vars' => ! empty( $page['seo_title']['template_vars'] ), 'site_name' => $page['site_name'],
+            'primary' => $kw['primary'], 'secondary' => $kw['secondary'], 'headings' => $parsed['headings'], 'text' => $text, 'word_count' => $wc,
+            'intent_label' => isset( $intent['label'] ) ? $intent['label'] : '', 'exact_duplicates' => isset( $page['duplicates']['title'] ) ? count( $page['duplicates']['title'] ) : 0,
+            'pool' => $page['title_pool'], 'self_id' => $page['id'], 'lists_ok' => $page['lists_ok'],
+        ) );
+        if ( ! $ta['analyzed'] ) { return $ta; }
+
+        $by = array();
+        foreach ( $ta['checks'] as $c ) { $by[ $c['id'] ] = $c; }
+
+        if ( isset( $by['width'] ) ) {
+            $chars = $ta['metrics']['chars'];
+            self::check( $r, 'meta', 'title_width', 'Title fits the estimated display width', $by['width']['status'], $by['width']['detail'] );
+            if ( 'warn' === $by['width']['status'] && $chars <= 60 ) {
+                self::add( $r, 'title_width_estimate', 'low', 'meta', sprintf( 'The title is only %d characters but is estimated at about %d px wide.', $chars, $ta['metrics']['px_mid'] ),
+                    'Search results shorten titles by width, not by character count, so a title with many wide letters can be cut before 60 characters. The width is an estimate and the real limit varies.',
+                    'Consider moving the most important words to the start of the title.', array( 'needs_human' => true, 'evidence' => $by['width']['evidence'] ) );
+            }
+        }
+        if ( isset( $by['dup_near'] ) ) {
+            self::check( $r, 'meta', 'title_near_dup', 'Title is not almost identical to another', $by['dup_near']['status'], $by['dup_near']['detail'] );
+            if ( 'warn' === $by['dup_near']['status'] ) {
+                self::add( $r, 'title_near_duplicate', 'low', 'meta', sprintf( '%d other page title(s) share most of their words with this title.', count( $ta['near_duplicates'] ) ),
+                    'Pages whose titles are almost the same are hard to tell apart in search results and may compete with each other.',
+                    'Decide whether the pages serve different purposes; if so, give each a title that says how it differs.', array( 'needs_human' => true, 'evidence' => $by['dup_near']['evidence'] ) );
+            }
+        }
+        if ( isset( $by['clarity'] ) && 'info' === $by['clarity']['status'] && false !== strpos( $by['clarity']['detail'], 'generic placeholder' ) ) {
+            self::add( $r, 'title_generic', 'low', 'meta', 'The title looks like a generic placeholder.',
+                'A title such as "Home" or "Untitled" tells searchers nothing about the page.', 'Write a title that names what the page is about.', array( 'needs_human' => true ) );
+        }
+        return $ta;
+    }
+
     /* ----------------------------------------------------------- structure */
 
-    private static function check_structure( array &$r, array $parsed, $wc, $eff_title, $text ) {
+    private static function check_structure( array &$r, array $parsed, $wc, $eff_title, $text, $lists_ok = true ) {
         $h  = $parsed['headings'];
         $h1 = 0;
         foreach ( $h as $x ) { if ( 1 === $x['level'] ) { $h1++; } }
@@ -294,7 +457,9 @@ final class SEO_Pilot_Audit {
             if ( SEO_Pilot_Text::len( $n ) >= 3 && ! isset( $stop[ $n ] ) ) { $tw[ $n ] = true; }
         }
         $tw = array_keys( $tw );
-        if ( count( $tw ) >= 2 && $wc >= 100 ) {
+        if ( ! $lists_ok ) {
+            self::check( $r, 'structure', 'title_alignment', 'Title, headings and introduction describe the same topic', 'manual', 'No word list for this page\'s language, so filler words cannot be told apart from content words. Compare them yourself.' );
+        } elseif ( count( $tw ) >= 2 && $wc >= 100 ) {
             $hay = implode( ' ', array_map( function ( $x ) { return $x['text']; }, $h ) ) . ' ' . SEO_Pilot_Text::first_words( $text, 120 );
             $hit = 0;
             foreach ( $tw as $w ) { if ( SEO_Pilot_Text::has_phrase( $hay, $w ) ) { $hit++; } }
@@ -344,7 +509,7 @@ final class SEO_Pilot_Audit {
             self::check( $r, 'content', 'repetition', 'Text avoids needless repetition', 'warn', count( $rep ) . ' repeated sentence(s).' );
         } else {
             $top_warn = false;
-            if ( $wc >= 250 ) {
+            if ( $wc >= 250 && $page['lists_ok'] ) {
                 $top = SEO_Pilot_Text::top_terms( $words, 3 );
                 if ( $top ) {
                     $first = key( $top );
@@ -359,11 +524,12 @@ final class SEO_Pilot_Audit {
                     }
                 }
             }
-            self::check( $r, 'content', 'repetition', 'Text avoids needless repetition', $top_warn ? 'warn' : 'pass' );
+            self::check( $r, 'content', 'repetition', 'Text avoids needless repetition', $top_warn ? 'warn' : 'pass', $page['lists_ok'] ? '' : 'Repeated sentences were checked; the word-frequency check was skipped because SEO Pilot has no word list for this language.' );
         }
 
-        // Generic filler (English-only phrase list).
-        if ( 'latin' === $lang || 'mixed' === $lang ) {
+        // Generic filler (English-only phrase list). Only run on pages that are, or may be, in English.
+        $filler_lang = ! empty( $page['lang_info']['declared'] ) ? 'en' === SEO_Pilot_Hreflang::lang_part( $page['lang_info']['code'] ) : ( 'latin' === $lang || 'mixed' === $lang );
+        if ( $filler_lang ) {
             $fillers = array( "in today's fast-paced world", 'in this day and age', 'it goes without saying', 'needless to say', 'at the end of the day', 'it is important to note that', "it's important to note that", 'as we all know', 'the fact of the matter', 'without further ado', 'in the realm of', 'a testament to' );
             $found   = array();
             foreach ( $fillers as $f ) { if ( SEO_Pilot_Text::has_phrase( $text, $f ) ) { $found[] = $f; } }
@@ -520,29 +686,73 @@ final class SEO_Pilot_Audit {
 
     /* -------------------------------------------------------------- images */
 
-    private static function check_images( array &$r, array $parsed ) {
-        $missing = array(); $susp = array(); $decor = 0;
-        foreach ( $parsed['images'] as $img ) {
-            if ( '' === $img['src'] ) { continue; }
-            if ( ! $img['has_alt'] ) {
-                $missing[] = array( 'src' => $img['src'], 'hash' => SEO_Pilot_Parser::src_hash( $img['src'] ), 'context' => $img['context'] );
-            } elseif ( '' === $img['alt'] ) {
-                $decor++;
-            } elseif ( SEO_Pilot_Text::looks_like_filename_alt( $img['alt'] ) ) {
-                $susp[] = $img['alt'];
+    /**
+     * Image alt-text checks, built on SEO_Pilot_Images. The two original findings (alt_missing,
+     * alt_suspicious) keep their ids and evidence shape; the newer ones are added beside them.
+     *
+     * @return array The image analysis, stored on the audit as image_analysis.
+     */
+    private static function check_images( array &$r, array $page, array $parsed, $title ) {
+        $ia = SEO_Pilot_Images::analyze( $parsed['images'], array( 'page_title' => $title, 'image_data' => $page['image_data'] ) );
+
+        $missing = array(); $susp = array(); $in_link = array(); $quality = array(); $dups = array(); $large = array();
+        foreach ( $ia['items'] as $it ) {
+            $name = SEO_Pilot_Images::label( $it['src'] );
+            foreach ( $it['issues'] as $is ) {
+                switch ( $is['id'] ) {
+                    case 'missing':       $missing[] = array( 'src' => $it['src'], 'hash' => $it['hash'], 'context' => $it['context'] ); break;
+                    case 'filename':      $susp[] = $it['alt']; break;
+                    case 'empty_in_link': $in_link[] = $name; break;
+                    case 'duplicate':     $dups[ $it['alt'] ] = true; break;
+                    case 'large_file':    $large[] = $name . ' (' . SEO_Pilot_Images::format_bytes( $it['filesize'] ) . ')'; break;
+                    case 'too_long': case 'redundant_prefix': case 'generic': case 'has_url': case 'repeated_words': case 'same_as_title':
+                        $quality[] = $name . ': ' . $is['text'];
+                        break;
+                }
             }
         }
+        $decor = $ia['counts']['decorative'];
+
         if ( $missing ) {
             self::add( $r, 'alt_missing', 'medium', 'images', count( $missing ) . ' image(s) have no alt attribute.',
                 'Alt text describes an image to people who cannot see it and to search engines. An image with no alt attribute at all gives them nothing.',
-                'Describe what each image shows (or mark purely decorative images with an empty alt). SEO Pilot cannot see your images, so it asks you for the text instead of guessing.',
+                'Describe what each image shows (or mark purely decorative images with an empty alt). SEO Pilot does not guess what a picture shows; you can write the text yourself, reuse the Media Library text, or, if you enabled it in Settings, ask a vision-capable AI model for a draft to review.',
                 array( 'needs_human' => true, 'evidence' => array_slice( $missing, 0, 20 ) ) );
         }
         if ( $susp ) {
             self::add( $r, 'alt_suspicious', 'low', 'images', count( $susp ) . ' image(s) have alt text that looks like a file name.', 'File names such as IMG_1234 do not describe the picture.', 'Replace them with a short description of what the image shows.', array( 'evidence' => self::limit_list( $susp ) ) );
         }
-        $status = $missing ? 'fail' : ( $susp ? 'warn' : ( $parsed['images'] ? 'pass' : 'na' ) );
+        if ( $in_link ) {
+            self::add( $r, 'alt_empty_in_link', 'medium', 'images', count( $in_link ) . ' linked image(s) have empty alt text and no other link text.',
+                'When an image is the only content of a link, its alt text is what a screen reader announces as the link\'s purpose. With an empty alt the link has no name.',
+                'Describe where the link goes or what it does (for example "Read our pricing guide"), not just what the picture looks like.', array( 'needs_human' => true, 'evidence' => self::limit_list( $in_link, 8 ) ) );
+        }
+        if ( $quality ) {
+            self::add( $r, 'alt_quality', 'low', 'images', count( $quality ) . ' alt text issue(s) worth reviewing.',
+                'Good alt text is short, specific and written for people who cannot see the image. These patterns are rules of thumb, not requirements.',
+                'Read each alt text and rewrite it only if it does not describe the image well.', array( 'needs_human' => true, 'evidence' => self::limit_list( $quality, 8 ) ) );
+        }
+        if ( $dups ) {
+            self::add( $r, 'alt_duplicate', 'low', 'images', count( $dups ) . ' alt text(s) are used on more than one image.',
+                'Different images usually need different descriptions; the same text repeated gives screen-reader users no way to tell them apart.',
+                'Give each image its own description of what it shows.', array( 'needs_human' => true, 'evidence' => self::limit_list( array_keys( $dups ) ) ) );
+        }
+        if ( $large ) {
+            self::add( $r, 'image_large_file', 'info', 'images', count( $large ) . ' image file(s) are large.',
+                'Large image files can slow a page. This uses the size WordPress recorded for the upload, so it only covers images that have one.',
+                'Consider compressing or resizing them before upload. SEO Pilot does not change image files.', array( 'evidence' => self::limit_list( $large ) ) );
+        }
+        if ( is_array( $ia['featured'] ) && '' === $ia['featured']['alt'] ) {
+            self::add( $r, 'featured_alt_missing', 'info', 'images', 'The featured image has no alt text in the Media Library.',
+                'Themes, feeds and social previews can use the featured image, and its alt text comes from the Media Library entry.',
+                'Open the image in Media → Library and add alt text there. SEO Pilot does not edit Media Library entries.' );
+        }
+
+        $bad    = $missing || $in_link;
+        $warn   = $susp || $quality || $dups;
+        $status = $bad ? 'fail' : ( $warn ? 'warn' : ( $parsed['images'] ? 'pass' : 'na' ) );
         self::check( $r, 'images', 'alt_text', 'Images have meaningful alt text', $status, $decor ? $decor . ' image(s) intentionally have empty alt text.' : '' );
+        return $ia;
     }
 
     /* ------------------------------------------------------ similar content */

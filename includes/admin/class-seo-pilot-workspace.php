@@ -8,7 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 final class SEO_Pilot_Workspace {
 
     public static function init() {
-        $actions = array( 'audit_post', 'save_page', 'generate', 'rec_action', 'save_alt', 'apply', 'rollback_group', 'live_check', 'analyse_site' );
+        $actions = array( 'audit_post', 'save_page', 'generate', 'rec_action', 'save_alt', 'alt_library', 'generate_alt', 'save_lang', 'link_trans', 'unlink_trans', 'fix_prepare', 'fix_apply', 'apply', 'rollback_group', 'live_check', 'analyse_site' );
         foreach ( $actions as $a ) {
             add_action( 'admin_post_seo_pilot_' . $a, array( __CLASS__, 'handle_' . $a ) );
         }
@@ -118,6 +118,7 @@ final class SEO_Pilot_Workspace {
                 if ( $clean !== $rec['proposed'] ) {
                     $flags = $rec['flags'];
                     $flags['edited'] = true;
+                    if ( 'alt_text' === $rec['rec_type'] ) { $flags['decorative'] = ( '' === $clean ); } // typing text means the image is not decorative
                     SEO_Pilot_Recs::update( $rec_id, array( 'proposed' => $clean, 'flags' => $flags, 'source' => 'user', 'status' => 'pending' ) );
                     $rec['status'] = 'pending';
                 }
@@ -135,40 +136,245 @@ final class SEO_Pilot_Workspace {
             if ( $open ) { SEO_Pilot_Recs::set_status( $rec_id, 'pending' ); }
         } elseif ( 'regenerate' === $op ) {
             $hash = ( 'rewrite' === $rec['rec_type'] ) ? (string) substr( $rec['target'], 4 ) : null;
-            if ( ! in_array( $rec['rec_type'], array( 'seo_title', 'meta_description', 'rewrite', 'outline', 'topics', 'faq', 'refresh' ), true ) ) {
+            if ( ! in_array( $rec['rec_type'], array( 'seo_title', 'meta_description', 'title_review', 'keywords_local', 'rewrite', 'outline', 'topics', 'faq', 'refresh' ), true ) ) {
                 SEO_Pilot_Util::flash( 'error', 'This item cannot be regenerated.' ); self::back( $post->ID );
             }
-            $res = self::generate( $post, array( 'rewrite' === $rec['rec_type'] ? 'rewrite' : $rec['rec_type'] ), '', $hash );
+            $task = 'keywords_local' === $rec['rec_type'] ? 'localize' : $rec['rec_type'];
+            $res  = self::generate( $post, array( $task ), '', $hash );
             if ( is_wp_error( $res ) ) { SEO_Pilot_Util::flash( 'error', $res->get_error_message() ); }
             else { SEO_Pilot_Util::flash( $res['created'] ? 'success' : 'info', $res['created'] ? 'A new suggestion replaced the old one.' : 'The AI had nothing different to suggest; the earlier suggestion was kept.' ); }
         }
         self::back( $post->ID );
     }
 
+    /** The images found by the last audit, keyed by the hash of their src. Only these can be edited from the form. */
+    private static function image_map( $audit ) {
+        $map = array();
+        if ( is_array( $audit ) && ! empty( $audit['image_analysis']['items'] ) ) {
+            foreach ( $audit['image_analysis']['items'] as $it ) { $map[ $it['hash'] ][] = $it; }
+        }
+        return $map;
+    }
+
+    /** Flags that tell the approval step how to change one image. */
+    private static function alt_flags( array $item, $decorative, array $notes = array() ) {
+        return array(
+            'verify' => array(), 'notes' => $notes, 'decorative' => (bool) $decorative,
+            'mode' => $item['has_alt'] ? 'replace' : 'add', 'old_alt' => $item['has_alt'] ? $item['alt'] : '',
+        );
+    }
+
     public static function handle_save_alt() {
         $post = self::guard( 'alt', self::post_id_from_request() );
-        $audit = SEO_Pilot_Audit_Runner::get_saved( $post->ID );
-        $srcmap = array();
-        if ( $audit ) {
-            foreach ( $audit['findings'] as $f ) {
-                if ( 'alt_missing' === $f['id'] ) { foreach ( $f['evidence'] as $e ) { $srcmap[ $e['hash'] ] = $e['src']; } }
-            }
-        }
+        $map  = self::image_map( SEO_Pilot_Audit_Runner::get_saved( $post->ID ) );
         $alts = ( isset( $_POST['alt'] ) && is_array( $_POST['alt'] ) ) ? wp_unslash( $_POST['alt'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification, WordPress.Security.ValidatedSanitizedInput
-        $n    = 0;
-        foreach ( $alts as $hash => $text ) {
-            $hash = preg_replace( '/[^a-f0-9]/', '', (string) $hash );
-            $text = SEO_Pilot_Text::sub( sanitize_text_field( (string) $text ), 0, 300 );
-            if ( '' === $text || ! isset( $srcmap[ $hash ] ) ) { continue; }
+        $deco = ( isset( $_POST['decorative'] ) && is_array( $_POST['decorative'] ) ) ? wp_unslash( $_POST['decorative'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification, WordPress.Security.ValidatedSanitizedInput
+        $n = 0; $skipped = 0;
+        foreach ( array_unique( array_merge( array_keys( $alts ), array_keys( $deco ) ) ) as $raw_hash ) {
+            $hash = preg_replace( '/[^a-f0-9]/', '', (string) $raw_hash );
+            if ( ! isset( $map[ $hash ] ) ) { continue; }
+            $item       = $map[ $hash ][0]; // images that share a src and differ only in alt are handled by the first row
+            $decorative = ! empty( $deco[ $raw_hash ] );
+            $text       = $decorative ? '' : SEO_Pilot_Text::sub( sanitize_text_field( isset( $alts[ $raw_hash ] ) ? (string) $alts[ $raw_hash ] : '' ), 0, 300 );
+            if ( '' === $text && ! $decorative ) { continue; }
+            if ( $decorative && 'decorative' === $item['kind'] ) { continue; }                 // already alt=""
+            if ( $decorative && 'empty_in_link' === $item['kind'] ) { $skipped++; continue; }  // would leave the link without a name
+            if ( ! $decorative && $item['has_alt'] && $text === $item['alt'] ) { continue; }   // nothing would change
             SEO_Pilot_Recs::supersede( $post->ID, array( 'alt_text' ), 'img:' . $hash );
             SEO_Pilot_Recs::insert( array(
-                'post_id' => $post->ID, 'rec_type' => 'alt_text', 'target' => 'img:' . $hash, 'original' => $srcmap[ $hash ], 'proposed' => $text,
-                'rationale' => 'Written by you after looking at the image.', 'flags' => array( 'verify' => array(), 'notes' => array() ),
+                'post_id' => $post->ID, 'rec_type' => 'alt_text', 'target' => 'img:' . $hash, 'original' => $item['src'], 'proposed' => $text,
+                'rationale' => $decorative ? 'You marked this image as decorative (empty alt text).' : 'Written by you after looking at the image.',
+                'flags' => self::alt_flags( $item, $decorative ),
                 'source' => 'user', 'status' => 'accepted', 'base_hash' => sha1( (string) $post->post_content ),
             ) );
             $n++;
         }
-        SEO_Pilot_Util::flash( $n ? 'success' : 'info', $n ? sprintf( '%d alt text entr(ies) saved as accepted. They are only applied when you use "Apply accepted changes".', $n ) : 'No alt text was entered.' );
+        $msg = $n ? sprintf( '%d alt text entr(ies) saved as accepted. They are only applied when you use "Apply accepted changes".', $n ) : 'No alt text was entered.';
+        if ( $skipped ) { $msg .= sprintf( ' %d linked image(s) were not marked decorative: an empty alt would leave the link without a name.', $skipped ); }
+        SEO_Pilot_Util::flash( $n ? 'success' : 'info', $msg );
+        self::back( $post->ID );
+    }
+
+    /** Proposes the Media Library's own alt text for images that have none on this page. No AI, nothing is sent anywhere. */
+    /**
+     * Proposes the Media Library's own alt text for images on this page that have none (and have no pending
+     * or accepted entry yet). Local, nothing is sent anywhere. Shared by the alt panel and the Fix assistant.
+     *
+     * @return int number of suggestions created
+     */
+    public static function create_library_alt_recs( WP_Post $post, $audit ) {
+        $map  = self::image_map( $audit );
+        $taken = array();
+        foreach ( SEO_Pilot_Recs::for_post( $post->ID, array( 'pending', 'accepted' ) ) as $r ) { if ( 'alt_text' === $r['rec_type'] ) { $taken[ $r['target'] ] = true; } }
+        $n = 0;
+        foreach ( $map as $hash => $rows ) {
+            $item = $rows[0];
+            if ( ! in_array( $item['kind'], array( 'missing', 'empty_in_link' ), true ) || '' === $item['library_alt'] || isset( $taken[ 'img:' . $hash ] ) ) { continue; }
+            SEO_Pilot_Recs::insert( array(
+                'post_id' => $post->ID, 'rec_type' => 'alt_text', 'target' => 'img:' . $hash, 'original' => $item['src'],
+                'proposed' => SEO_Pilot_Text::sub( sanitize_text_field( $item['library_alt'] ), 0, 300 ),
+                'rationale' => 'Taken from the alt text stored for this image in your Media Library. It was not generated.',
+                'flags' => self::alt_flags( $item, false, array( 'The Media Library text is written once for every use of the image. Check that it fits this page.' ) ),
+                'source' => 'local', 'status' => 'pending', 'base_hash' => sha1( (string) $post->post_content ),
+            ) );
+            $n++;
+        }
+        return $n;
+    }
+
+    public static function handle_alt_library() {
+        $post = self::guard( 'altlib', self::post_id_from_request() );
+        $n    = self::create_library_alt_recs( $post, SEO_Pilot_Audit_Runner::get_saved( $post->ID ) );
+        SEO_Pilot_Util::flash( $n ? 'success' : 'info', $n ? sprintf( '%d suggestion(s) from the Media Library are ready for review. Nothing has been changed on the page.', $n ) : 'No image on this page is missing alt text that the Media Library already has.' );
+        self::back( $post->ID );
+    }
+
+    /* ----------------------------------------------- language and translations */
+
+    private static function lang_done( $post_id, $res, $ok_message ) {
+        if ( is_wp_error( $res ) ) { SEO_Pilot_Util::flash( 'error', $res->get_error_message() ); }
+        else {
+            SEO_Pilot_Audit_Runner::audit_post( $post_id );
+            SEO_Pilot_Util::flash( 'success', $ok_message );
+        }
+        self::back( $post_id );
+    }
+
+    /** Set (or clear) the language of a page. Manual mode only; plugins own the language when one is active. */
+    public static function handle_save_lang() {
+        $post = self::guard( 'lang', self::post_id_from_request() );
+        $res  = SEO_Pilot_Lang::set_language( $post->ID, sanitize_text_field( self::posted( 'lang' ) ) );
+        self::lang_done( $post->ID, $res, 'The page language was saved. Nothing else on the page changed.' );
+    }
+
+    /** Link another page as a translation of this one. The user must be allowed to edit both pages. */
+    public static function handle_link_trans() {
+        $post  = self::guard( 'linktrans', self::post_id_from_request() );
+        $other = self::guard_post( isset( $_POST['other_id'] ) ? absint( $_POST['other_id'] ) : 0 ); // phpcs:ignore WordPress.Security.NonceVerification -- verified in guard().
+        $res   = SEO_Pilot_Lang::link( $post->ID, $other->ID, sanitize_text_field( self::posted( 'lang' ) ) );
+        if ( ! is_wp_error( $res ) ) { SEO_Pilot_Audit_Runner::audit_post( $other->ID ); }
+        self::lang_done( $post->ID, $res, 'The pages are now linked as translations. Nothing was changed on the pages themselves.' );
+    }
+
+    public static function handle_unlink_trans() {
+        $post = self::guard( 'unlinktrans', self::post_id_from_request() );
+        $res  = SEO_Pilot_Lang::unlink( $post->ID );
+        self::lang_done( $post->ID, $res, 'This page was removed from its translation group.' );
+    }
+
+    public static function handle_generate_alt() {
+        $post = self::guard( 'altai', self::post_id_from_request() );
+        $res  = SEO_Pilot_Alt_AI::draft( $post, SEO_Pilot_Audit_Runner::get_saved( $post->ID ) );
+        if ( is_wp_error( $res ) ) {
+            SEO_Pilot_Util::flash( 'error', $res->get_error_message() );
+        } else {
+            $msg = $res['created'] ? sprintf( '%d AI draft(s) are ready for review. Nothing has been changed on the page.', $res['created'] ) : 'The AI had no usable draft for these images.';
+            if ( $res['warnings'] ) { $msg .= ' ' . implode( ' ', $res['warnings'] ); }
+            SEO_Pilot_Util::flash( $res['created'] ? 'success' : 'info', $msg );
+        }
+        self::back( $post->ID );
+    }
+
+    /* ------------------------------------------------------------ Fix assistant */
+
+    /** What the Fix assistant needs to know to say which fixes are possible right now. */
+    public static function fix_context( WP_Post $post, $audit ) {
+        $owner   = SEO_Pilot_Compat::owner();
+        $li      = SEO_Pilot_Lang::for_post( $post->ID );
+        $taken   = array();
+        foreach ( SEO_Pilot_Recs::for_post( $post->ID, array( 'pending', 'accepted' ) ) as $r ) { if ( 'alt_text' === $r['rec_type'] ) { $taken[ $r['target'] ] = true; } }
+        $library = 0;
+        foreach ( self::image_map( $audit ) as $hash => $rows ) {
+            $it = $rows[0];
+            if ( in_array( $it['kind'], array( 'missing', 'empty_in_link' ), true ) && '' !== $it['library_alt'] && ! isset( $taken[ 'img:' . $hash ] ) ) { $library++; }
+        }
+        $cfg = SEO_Pilot_Settings::configuration_problem();
+        $img = SEO_Pilot_Settings::images_problem();
+        return array(
+            'ai_ready' => '' === $cfg, 'ai_problem' => $cfg, 'images_ready' => '' === $img, 'images_problem' => $img,
+            'library_count' => $library, 'alt_ai_count' => '' === $img && is_array( $audit ) ? count( SEO_Pilot_Alt_AI::candidates( $post, $audit ) ) : 0,
+            'has_source' => (bool) $li['members'],
+            'title_writable' => SEO_Pilot_Compat::can_write( $owner, 'seo_title' ), 'meta_writable' => SEO_Pilot_Compat::can_write( $owner, 'meta_description' ),
+            'owner_label' => SEO_Pilot_Compat::label( $owner ),
+        );
+    }
+
+    /**
+     * Step 2 of the Fix assistant: prepare proposals for the fixes the editor ticked. Only proposals are
+     * created (in the recommendations table); nothing on the page changes. AI is called only here, on this click.
+     */
+    public static function handle_fix_prepare() {
+        $post  = self::guard( 'fixprep', self::post_id_from_request() );
+        $asked = ( isset( $_POST['fix'] ) && is_array( $_POST['fix'] ) ) ? array_map( 'sanitize_key', wp_unslash( $_POST['fix'] ) ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+        $audit = SEO_Pilot_Audit_Runner::audit_post( $post );   // fresh, so the choices below match what is on the page now
+        $ctx   = self::fix_context( $post, $audit );
+        $chosen = array();
+        foreach ( SEO_Pilot_Fixes::for_audit( $audit, $ctx ) as $fix ) {
+            if ( $fix['available'] && in_array( $fix['id'], $asked, true ) ) { $chosen[] = $fix['id']; }   // never trust posted ids: only fixes that are really available
+        }
+        if ( ! $chosen ) {
+            SEO_Pilot_Util::flash( 'error', 'Choose at least one available fix.' );
+            self::back( $post->ID );
+        }
+        $plan = SEO_Pilot_Fixes::plan_tasks( $chosen );
+        $made = 0; $problems = array(); $notes = array();
+        if ( $plan['library'] ) { $made += self::create_library_alt_recs( $post, $audit ); }
+        if ( $plan['ai_tasks'] ) {
+            $res = self::generate( $post, $plan['ai_tasks'] );
+            if ( is_wp_error( $res ) ) { $problems[] = $res->get_error_message(); } else { $made += $res['created']; $notes = array_merge( $notes, $res['warnings'] ); }
+        }
+        if ( $plan['alt_vision'] ) {
+            $res = SEO_Pilot_Alt_AI::draft( $post, SEO_Pilot_Audit_Runner::get_saved( $post->ID ) );
+            if ( is_wp_error( $res ) ) { $problems[] = $res->get_error_message(); } else { $made += $res['created']; $notes = array_merge( $notes, $res['warnings'] ); }
+        }
+        $msg = $made ? sprintf( '%d proposed change(s) are ready below. Nothing has been changed on the page.', $made ) : 'No proposed change was created.';
+        if ( $problems ) { $msg .= ' ' . implode( ' ', $problems ); }
+        if ( $notes ) { $msg .= ' ' . implode( ' ', array_slice( $notes, 0, 3 ) ); }
+        SEO_Pilot_Util::flash( $made ? ( $problems ? 'warning' : 'success' ) : 'error', $msg );
+        self::back( $post->ID );
+    }
+
+    /**
+     * Step 3: apply exactly the proposals the editor ticked (through the normal Approval code, so every safety rule
+     * still holds), re-run the audit and compare it with the audit taken just before.
+     */
+    public static function handle_fix_apply() {
+        $post = self::guard( 'fixapply', self::post_id_from_request() );
+        $want = ( isset( $_POST['rec'] ) && is_array( $_POST['rec'] ) ) ? array_map( 'absint', wp_unslash( $_POST['rec'] ) ) : array(); // phpcs:ignore WordPress.Security.NonceVerification
+        $recs = array(); $was = array();
+        foreach ( array_unique( $want ) as $rid ) {
+            $r = SEO_Pilot_Recs::get( $rid );
+            if ( $r && (int) $r['post_id'] === (int) $post->ID && in_array( $r['rec_type'], array( 'seo_title', 'meta_description', 'alt_text' ), true ) && in_array( $r['status'], array( 'pending', 'accepted' ), true ) ) {
+                $recs[ $rid ] = $r; $was[ $rid ] = $r['status'];
+            }
+        }
+        if ( ! $recs ) {
+            SEO_Pilot_Util::flash( 'error', 'Tick at least one proposed change to apply.' );
+            self::back( $post->ID );
+        }
+        $before = SEO_Pilot_Audit_Runner::audit_post( $post );   // the state right before the change
+        foreach ( array_keys( $recs ) as $rid ) { SEO_Pilot_Recs::set_status( $rid, 'accepted' ); }
+        $mode = 'draft_copy' === sanitize_key( self::posted( 'mode' ) ) ? 'draft_copy' : 'live';
+        $res  = SEO_Pilot_Approval::apply( $post->ID, array(
+            'mode' => $mode, 'only' => array_keys( $recs ),
+            'confirm_live' => ! empty( $_POST['confirm_live'] ), 'confirm_owner' => ! empty( $_POST['confirm_owner'] ), // phpcs:ignore WordPress.Security.NonceVerification
+        ) );
+        if ( is_wp_error( $res ) ) {
+            foreach ( $was as $rid => $st ) { if ( 'pending' === $st ) { SEO_Pilot_Recs::set_status( $rid, 'pending' ); } }   // leave things as they were
+            SEO_Pilot_Util::flash( 'error', $res->get_error_message() );
+            self::back( $post->ID );
+        }
+        if ( 'draft_copy' === $res['mode'] ) {
+            SEO_Pilot_Util::flash( 'success', sprintf( 'A draft copy (#%d) was created with the selected changes. The live page was not changed, so there is nothing to verify yet.', $res['draft_id'] ) );
+            self::back( $post->ID );
+        }
+        $types   = array_values( array_unique( array_map( function ( $r ) { return $r['rec_type']; }, $recs ) ) );
+        $targets = SEO_Pilot_Fixes::targets_for_rec_types( $types, array_keys( SEO_Pilot_Verify::snapshot( $before ) ) );
+        $verify  = SEO_Pilot_Verify::compare( $before, isset( $res['audit'] ) && is_array( $res['audit'] ) ? $res['audit'] : $before, $targets );
+        set_transient( 'seo_pilot_fixrun_' . $post->ID, array(
+            'at' => SEO_Pilot_Util::now(), 'group_id' => $res['group_id'], 'fields' => $res['fields'], 'changes' => count( $recs ), 'verify' => $verify, 'user' => get_current_user_id(),
+        ), DAY_IN_SECONDS );
+        SEO_Pilot_Util::flash( 'regressed' === $verify['verdict'] ? 'warning' : 'success', 'Applied: ' . implode( ', ', $res['fields'] ) . '. ' . SEO_Pilot_Verify::message( $verify ) );
         self::back( $post->ID );
     }
 
@@ -211,6 +417,10 @@ final class SEO_Pilot_Workspace {
         $live = SEO_Pilot_Live_Check::fetch( $post );
         if ( is_wp_error( $live ) ) { SEO_Pilot_Util::flash( 'error', $live->get_error_message() ); }
         else {
+            // Optional: also fetch the alternate-language pages this page lists (this site only, at most 5) to check their return tags.
+            if ( ! empty( $_POST['deep'] ) && ! empty( $live['hreflang'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification -- verified in guard().
+                $live['alternates'] = SEO_Pilot_Live_Check::fetch_alternates( $live, $live['url'] );
+            }
             set_transient( 'seo_pilot_live_' . $post->ID, $live, 15 * MINUTE_IN_SECONDS );
             SEO_Pilot_Util::flash( 'success', 'Live output fetched. See the results below.' );
         }
@@ -291,6 +501,7 @@ final class SEO_Pilot_Workspace {
         if ( 'seo_title' === $type || 'meta_description' === $type || 'alt_text' === $type ) {
             $max = 'seo_title' === $type ? 200 : ( 'meta_description' === $type ? 400 : 300 );
             $t   = sanitize_text_field( $text );
+            if ( '' === $t && 'alt_text' === $type && ! empty( $rec['flags']['decorative'] ) ) { return ''; } // decorative image: empty alt is intended
             if ( '' === $t ) { return new WP_Error( 'seo_pilot_empty', 'The text cannot be empty.' ); }
             if ( SEO_Pilot_Text::len( $t ) > $max ) { return new WP_Error( 'seo_pilot_long', 'That text is too long.' ); }
             return $t;
@@ -322,26 +533,43 @@ final class SEO_Pilot_Workspace {
         $parsed   = SEO_Pilot_Parser::parse( $post->post_content );
         $findings = array();
         foreach ( $audit['findings'] as $f ) { if ( 'info' !== $f['severity'] ) { $findings[] = $f['what']; } }
+        // Measured results for the optional title review, as short "label: detail" lines (page-derived evidence is left out).
+        $title_checks = array();
+        if ( ! empty( $audit['title_analysis']['analyzed'] ) ) {
+            foreach ( $audit['title_analysis']['checks'] as $c ) {
+                if ( 'na' === $c['status'] ) { continue; }
+                $title_checks[] = SEO_Pilot_Text::sub( $c['label'] . ' (' . $c['basis'] . '): ' . $c['detail'], 0, 300 );
+            }
+        }
+        $opening = SEO_Pilot_Text::truncate( SEO_Pilot_Text::plain( (string) $post->post_content ), 600 );
         $path = (string) wp_parse_url( get_permalink( $post ), PHP_URL_PATH );
         $q    = (string) wp_parse_url( get_permalink( $post ), PHP_URL_QUERY );
+        // The language set for this page (by the editor or a translation plugin), its regional wording note, and a source page to localize from.
+        $li = SEO_Pilot_Lang::for_post( $post->ID );
         return array(
+            'lang_name' => $li['declared'] ? $li['label'] . ' (' . $li['code'] . ')' : '', 'lang_note' => $li['declared'] ? SEO_Pilot_Lang::note( $li['code'] ) : '',
+            'lang_script' => $li['declared'] ? SEO_Pilot_Hreflang::script_class( $li['code'] ) : '',
+            'localize_source' => $li['members'] ? SEO_Pilot_Lang::localize_source( $li ) : null,
             'title' => wp_strip_all_tags( get_the_title( $post ) ), 'url_path' => $path . ( $q ? '?' . $q : '' ), 'post_type' => $post->post_type,
             'language' => $audit['language'], 'seo_title' => $st['value'], 'meta_description' => $md['value'],
             'primary' => $set['primary'], 'secondary' => $set['secondary'], 'intent_label' => $audit['intent']['label'], 'intent_source' => $audit['intent']['source'],
             'audience' => $set['audience'], 'headings' => $parsed['headings'], 'segments' => SEO_Pilot_Parser::paragraph_segments( $post->post_content ),
-            'findings' => $findings, 'instruction' => $instruction,
-            'explain_lang' => 0 === strpos( determine_locale(), 'ar' ) ? 'ar' : 'en',
+            'findings' => $findings, 'instruction' => $instruction, 'title_checks' => $title_checks, 'opening' => $opening[0],
+            'explain_lang' => SEO_Pilot_Hreflang::lang_part( determine_locale() ),
         );
     }
 
     /** @return array|WP_Error created, warnings, truncated_input, truncated_output */
-    private static function generate( WP_Post $post, array $tasks, $instruction = '', $only_hash = null ) {
+    public static function generate( WP_Post $post, array $tasks, $instruction = '', $only_hash = null ) {
         $problem = SEO_Pilot_Settings::configuration_problem();
         if ( '' !== $problem ) { return new WP_Error( 'seo_pilot_ai_not_configured', $problem ); }
         if ( function_exists( 'set_time_limit' ) ) { @set_time_limit( max( 60, (int) SEO_Pilot_Settings::get( 'timeout', 45 ) + 20 ) ); } // phpcs:ignore WordPress.PHP.NoSilencedErrors, Squiz.PHP.DiscouragedFunctions
 
         $audit = SEO_Pilot_Audit_Runner::audit_post( $post );
         $ctx   = self::prompt_context( $post, $audit, $instruction );
+        if ( in_array( 'localize', $tasks, true ) && empty( $ctx['localize_source'] ) ) {
+            return new WP_Error( 'seo_pilot_no_source', 'Localizing needs a translation of this page in another language. Link one in the Language panel first.' );
+        }
         $opts  = array();
         if ( $only_hash ) {
             $found = '';
@@ -358,6 +586,8 @@ final class SEO_Pilot_Workspace {
         $parsed = SEO_Pilot_Validator::parse( $resp['content'], array(
             'tasks' => $tasks, 'segments' => $segmap, 'content_text' => SEO_Pilot_Text::plain( $post->post_content ),
             'seo_title' => $ctx['seo_title'], 'meta_description' => $ctx['meta_description'], 'title' => $ctx['title'],
+            'expected_script' => $ctx['lang_script'], 'lang_name' => $ctx['lang_name'],
+            'source_keyword' => $ctx['localize_source'] ? $ctx['localize_source']['primary'] : '', 'source_lang' => $ctx['localize_source'] ? $ctx['localize_source']['lang_name'] : '',
         ) );
         if ( is_wp_error( $parsed ) ) {
             return $resp['truncated'] ? new WP_Error( $parsed->get_error_code(), $parsed->get_error_message() . ' The provider cut the answer off, so choose fewer tasks or raise the model\'s output limit.' ) : $parsed;
@@ -366,7 +596,9 @@ final class SEO_Pilot_Workspace {
         if ( $only_hash ) {
             SEO_Pilot_Recs::supersede( $post->ID, array( 'rewrite' ), 'seg:' . $only_hash );
         } else {
-            SEO_Pilot_Recs::supersede( $post->ID, array_map( function ( $t ) { return 'rewrite' === $t ? 'rewrite' : $t; }, $tasks ) );
+            $types = $tasks;
+            if ( in_array( 'localize', $tasks, true ) ) { $types = array_merge( $types, array( 'seo_title', 'meta_description', 'keywords_local' ) ); }
+            SEO_Pilot_Recs::supersede( $post->ID, array_values( array_unique( $types ) ) );
         }
         $batch = SEO_Pilot_Util::uuid();
         $hash  = sha1( (string) $post->post_content );

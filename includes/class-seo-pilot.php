@@ -22,6 +22,11 @@ final class SEO_Pilot {
         add_action( 'wp_head', array( $this, 'output_meta_description' ), 1 );
         add_filter( 'pre_get_document_title', array( $this, 'filter_document_title' ), 20 );
 
+        // Multilingual output. Both are opt-in (Settings → Languages) and both are skipped whenever a
+        // translation plugin is active, because that plugin is then responsible for them.
+        add_action( 'wp_head', array( $this, 'output_hreflang' ), 2 );
+        add_filter( 'language_attributes', array( $this, 'filter_language_attributes' ), 20 );
+
         SEO_Pilot_Admin::init();
         SEO_Pilot_Workspace::init();
         SEO_Pilot_Admin_Data::init();
@@ -50,6 +55,33 @@ final class SEO_Pilot {
         if ( is_string( $desc ) && '' !== trim( $desc ) ) {
             echo "\n" . '<meta name="description" content="' . esc_attr( $desc ) . '">' . "\n";
         }
+    }
+
+    /**
+     * hreflang tags for pages that were linked as translations in SEO Pilot. Every page in a group prints
+     * the same complete list (itself and all the others), so the tags are reciprocal by construction.
+     * Drafts, noindex pages and anything else that is not published are left out; with fewer than two
+     * languages left nothing is printed. Canonicals are never touched.
+     */
+    public function output_hreflang() {
+        if ( is_admin() || ! is_singular() || ! SEO_Pilot_Settings::get( 'hreflang_output', 0 ) || SEO_Pilot_Lang::owns_hreflang() ) { return; }
+        if ( ! apply_filters( 'seo_pilot_output_hreflang', true ) ) { return; }
+        $li = SEO_Pilot_Lang::for_post( get_queried_object_id() );
+        if ( 'manual' !== $li['source'] || ! $li['members'] ) { return; }
+        $members = array();
+        foreach ( SEO_Pilot_Lang::indexable_members( $li ) as $m ) { $members[] = array( 'code' => $m['code'], 'url' => esc_url_raw( $m['url'] ) ); }
+        $tags = SEO_Pilot_Hreflang::tags( $members, SEO_Pilot_Lang::default_language() );
+        if ( $tags ) {
+            echo "\n" . SEO_Pilot_Hreflang::render( $tags ); // phpcs:ignore WordPress.Security.EscapeOutput -- attribute values are escaped by render() and URLs by esc_url_raw().
+        }
+    }
+
+    /** Page language for the <html> tag when the editor chose it in SEO Pilot (opt-in). Text direction is left to the theme. */
+    public function filter_language_attributes( $output ) {
+        if ( is_admin() || ! is_singular() || ! SEO_Pilot_Settings::get( 'html_lang', 0 ) || SEO_Pilot_Lang::owns_hreflang() ) { return $output; }
+        $code = SEO_Pilot_Hreflang::normalize_code( (string) get_post_meta( get_queried_object_id(), SEO_Pilot_Lang::META_LANG, true ) );
+        if ( '' === $code || 'x-default' === $code ) { return $output; }
+        return SEO_Pilot_Hreflang::with_lang_attribute( (string) $output, $code );
     }
 
     /** Uses the SEO title saved by SEO Pilot, only when no other SEO plugin is active. */

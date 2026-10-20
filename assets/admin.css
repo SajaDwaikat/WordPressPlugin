@@ -36,3 +36,16 @@ ins.seo-pilot-ins,.seo-pilot-ins{background:#e6f4ea;color:#18794e;text-decoratio
 .seo-pilot-img-src{width:36%}
 .seo-pilot-history td{vertical-align:top}
 @media(max-width:782px){.seo-pilot-compare{grid-template-columns:1fr}}
+/* ---- Title analysis ---- */
+.seo-pilot-badge.check-info,.seo-pilot-badge.check-na{background:#f0f0f1;color:#50575e}
+.seo-pilot-opportunities{margin:6px 0 12px;padding-inline-start:20px;list-style:disc}.seo-pilot-opportunities li{margin:6px 0}
+.seo-pilot-title-analysis td ul.seo-pilot-evidence{margin:4px 0 0}
+/* ---- Images and alt text ---- */
+.seo-pilot-thumb{display:block;max-width:80px;height:auto;margin-bottom:4px;border:1px solid #dcdcde;background:#f6f7f7}
+.seo-pilot-imgtable td{vertical-align:top}
+.seo-pilot-images .seo-pilot-evidence{margin:4px 0 0}
+/* ---- Fix assistant ---- */
+.seo-pilot-fixgroup{border:1px solid #dcdcde;border-radius:6px;margin:10px 0;padding:6px 14px}
+.seo-pilot-fixgroup legend{padding:0 6px}
+.seo-pilot-fixtable td{vertical-align:top}.seo-pilot-fixtable th:first-child,.seo-pilot-fixtable td:first-child{width:56px;text-align:center}
+.seo-pilot-fixes h3{margin-top:18px}

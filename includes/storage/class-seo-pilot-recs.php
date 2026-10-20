@@ -22,7 +22,7 @@ final class SEO_Pilot_Recs {
         $m = array(
             'seo_title' => 'SEO title', 'meta_description' => 'Meta description', 'rewrite' => 'Paragraph rewrite', 'alt_text' => 'Image alt text',
             'internal_link' => 'Internal link', 'inbound_links' => 'Pages that could link here', 'site_gap' => 'Terms related pages use',
-            'outline' => 'Suggested outline', 'topics' => 'Missing topics and questions', 'faq' => 'FAQ ideas', 'refresh' => 'Refresh and verification notes',
+            'title_review' => 'Title review (AI advice)', 'keywords_local' => 'Localized keyword suggestions (AI advice)', 'outline' => 'Suggested outline', 'topics' => 'Missing topics and questions', 'faq' => 'FAQ ideas', 'refresh' => 'Refresh and verification notes',
         );
         return isset( $m[ $type ] ) ? $m[ $type ] : $type;
     }
