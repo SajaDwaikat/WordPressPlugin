@@ -1,0 +1,32 @@
+# Secrets and local configuration: never commit these
+.env
+.env.*
+*.pem
+*.key
+auth.json
+wp-config.php
+wp-config-local.php
+
+# Dependencies and generated files
+node_modules/
+vendor/
+build/
+dist/
+coverage/
+*.log
+npm-debug.log*
+
+# Release packages and backups (build them, do not store them in Git)
+*.zip
+*.tar.gz
+*.bak
+*-backup*/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.tmp

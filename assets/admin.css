@@ -1,1 +1,51 @@
-.seo-pilot-wrap{max-width:1180px}.seo-pilot-version{font-size:12px;background:#e8f3ff;color:#145b93;padding:4px 8px;border-radius:20px;vertical-align:middle}.seo-pilot-intro{font-size:14px;color:#50575e;max-width:850px}.seo-pilot-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:22px 0}.seo-pilot-card,.seo-pilot-panel{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px}.seo-pilot-card span{display:block;color:#646970;font-size:13px;margin-bottom:8px}.seo-pilot-card strong{font-size:24px;color:#1d2327}.seo-pilot-card .seo-pilot-date{font-size:15px}.seo-pilot-panel{margin:18px 0}.seo-pilot-panel h2{margin-top:0}.seo-pilot-result{border-top:1px solid #e2e4e7;padding:18px 0}.seo-pilot-result:first-of-type{border-top:0}.seo-pilot-result-head{display:flex;justify-content:space-between;gap:15px;align-items:flex-start}.seo-pilot-result-head h3{margin:0 0 6px}.seo-pilot-count{white-space:nowrap;background:#f0f0f1;border-radius:16px;padding:4px 9px;font-size:12px}.seo-pilot-issues{margin:14px 0;padding-left:0}.seo-pilot-issues li{margin:9px 0}.seo-pilot-severity{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;padding:3px 6px;border-radius:4px;margin-right:5px}.severity-high{background:#fce8e6;color:#a12622}.severity-medium{background:#fff3cd;color:#785900}.severity-low{background:#e8f3ff;color:#145b93}.seo-pilot-ok{color:#18794e}.seo-pilot-actions{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-top:14px}.seo-pilot-actions form{margin:0}.seo-pilot-suggestion{flex-basis:100%;background:#f6f7f7;border-left:4px solid #2271b1;padding:14px 16px;margin-top:8px}.seo-pilot-suggestion h4{margin-top:0}.seo-pilot-inline{display:inline-block;margin-right:8px!important}.seo-pilot-footnote{padding:14px 0;color:#646970;max-width:950px}@media(max-width:782px){.seo-pilot-cards{grid-template-columns:1fr}.seo-pilot-result-head{display:block}.seo-pilot-count{display:inline-block;margin-top:10px}}
+.seo-pilot-wrap{max-width:1180px}.seo-pilot-version{font-size:12px;background:#e8f3ff;color:#145b93;padding:4px 8px;border-radius:20px;vertical-align:middle}.seo-pilot-intro{font-size:14px;color:#50575e;max-width:850px}.seo-pilot-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:22px 0}.seo-pilot-card,.seo-pilot-panel{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px}.seo-pilot-card span{display:block;color:#646970;font-size:13px;margin-bottom:8px}.seo-pilot-card strong{font-size:24px;color:#1d2327}.seo-pilot-card .seo-pilot-date{font-size:15px}.seo-pilot-panel{margin:18px 0}.seo-pilot-panel h2{margin-top:0}.seo-pilot-result{border-top:1px solid #e2e4e7;padding:18px 0}.seo-pilot-result:first-of-type{border-top:0}.seo-pilot-result-head{display:flex;justify-content:space-between;gap:15px;align-items:flex-start}.seo-pilot-result-head h3{margin:0 0 6px}.seo-pilot-count{white-space:nowrap;background:#f0f0f1;border-radius:16px;padding:4px 9px;font-size:12px}.seo-pilot-issues{margin:14px 0;padding-left:0}.seo-pilot-issues li{margin:9px 0}.seo-pilot-severity{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;padding:3px 6px;border-radius:4px;margin-inline-end:5px}.severity-high{background:#fce8e6;color:#a12622}.severity-medium{background:#fff3cd;color:#785900}.severity-low{background:#e8f3ff;color:#145b93}.seo-pilot-ok{color:#18794e}.seo-pilot-actions{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-top:14px}.seo-pilot-actions form{margin:0}.seo-pilot-suggestion{flex-basis:100%;background:#f6f7f7;border-inline-start:4px solid #2271b1;padding:14px 16px;margin-top:8px}.seo-pilot-suggestion h4{margin-top:0}.seo-pilot-inline{display:inline-block;margin-inline-end:8px!important}.seo-pilot-footnote{padding:14px 0;color:#646970;max-width:950px}@media(max-width:782px){.seo-pilot-cards{grid-template-columns:1fr}.seo-pilot-result-head{display:block}.seo-pilot-count{display:inline-block;margin-top:10px}}
+/* ---- Content SEO module (0.2.0) ---- */
+.seo-pilot-badge{display:inline-block;font-size:11px;line-height:1;padding:3px 7px;border-radius:10px;background:#f0f0f1;color:#3c434a;vertical-align:middle;margin-inline-start:4px}
+.seo-pilot-badge.muted{background:#f6f7f7;color:#646970;border:1px solid #dcdcde}
+.seo-pilot-badge.status-publish{background:#e6f4ea;color:#18794e}.seo-pilot-badge.status-draft{background:#fff3cd;color:#785900}
+.seo-pilot-badge.check-pass{background:#e6f4ea;color:#18794e}.seo-pilot-badge.check-warn{background:#fff3cd;color:#785900}
+.seo-pilot-badge.check-fail{background:#fce8e6;color:#a12622}.seo-pilot-badge.check-manual{background:#e8f3ff;color:#145b93}
+.seo-pilot-badge.rec-accepted,.seo-pilot-badge.rec-applied{background:#e6f4ea;color:#18794e}.seo-pilot-badge.rec-rejected,.seo-pilot-badge.rec-stale{background:#fce8e6;color:#a12622}
+.seo-pilot-badge.rec-pending{background:#fff3cd;color:#785900}
+.seo-pilot-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0}
+.seo-pilot-list td,.seo-pilot-fields td{vertical-align:top}
+.seo-pilot-finding{border-inline-start:4px solid #dcdcde;padding:6px 14px;margin:12px 0;background:#fafafa}
+.seo-pilot-finding p{margin:6px 0}
+.severity-border-high{border-inline-start-color:#a12622}.severity-border-medium{border-inline-start-color:#dba617}.severity-border-low{border-inline-start-color:#2271b1}.severity-border-info{border-inline-start-color:#8c8f94}
+.severity-info{background:#f0f0f1;color:#50575e}
+.seo-pilot-evidence{margin:4px 0 8px;padding-inline-start:20px;list-style:disc;color:#50575e}
+.seo-pilot-checklist{margin:6px 0 14px;padding:0;list-style:none}.seo-pilot-checklist li{margin:6px 0}
+.seo-pilot-tasks{border:0;margin:10px 0;padding:0}
+.seo-pilot-preview{max-height:260px;overflow:auto;background:#f6f7f7;border:1px solid #dcdcde;padding:10px;white-space:pre-wrap;word-break:break-word;font-size:12px}
+.seo-pilot-rec{border:1px solid #dcdcde;border-radius:8px;padding:14px 16px;margin:14px 0;background:#fff}
+.seo-pilot-rec.rec-accepted{border-color:#18794e}.seo-pilot-rec.rec-rejected{opacity:.7}.seo-pilot-rec.rec-stale{border-color:#a12622}
+.seo-pilot-rec-head{margin-bottom:6px}
+.seo-pilot-verify{background:#fff8e5;border:1px solid #f0d98c;border-radius:6px;padding:8px 12px;margin:8px 0}.seo-pilot-verify ul{margin:4px 0 0;padding-inline-start:20px;list-style:disc}
+.seo-pilot-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:10px 0}
+.seo-pilot-box{background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-word;min-height:24px}
+.seo-pilot-label{display:block;font-size:12px;font-weight:600;color:#50575e;margin-bottom:4px}
+del.seo-pilot-del,.seo-pilot-del{background:#fce8e6;color:#a12622;text-decoration:line-through}
+ins.seo-pilot-ins,.seo-pilot-ins{background:#e6f4ea;color:#18794e;text-decoration:none}
+.seo-pilot-buttons{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}.seo-pilot-buttons form{margin:0}
+.seo-pilot-recform{margin-top:8px}
+.seo-pilot-error{color:#a12622;font-weight:600}
+.seo-pilot-planitem{border:1px solid #dcdcde;border-radius:6px;padding:8px 12px;margin:10px 0}
+.seo-pilot-apply{border-inline-start:4px solid #2271b1}
+.seo-pilot-rollback{background:#f6f7f7;border-radius:6px;padding:8px 12px;margin:10px 0}
+.seo-pilot-livenotes{list-style:none;padding:0}.live-warn{color:#785900}.live-ok{color:#18794e}.live-info{color:#50575e}
+.seo-pilot-img-src{width:36%}
+.seo-pilot-history td{vertical-align:top}
+@media(max-width:782px){.seo-pilot-compare{grid-template-columns:1fr}}
+/* ---- Title analysis ---- */
+.seo-pilot-badge.check-info,.seo-pilot-badge.check-na{background:#f0f0f1;color:#50575e}
+.seo-pilot-opportunities{margin:6px 0 12px;padding-inline-start:20px;list-style:disc}.seo-pilot-opportunities li{margin:6px 0}
+.seo-pilot-title-analysis td ul.seo-pilot-evidence{margin:4px 0 0}
+/* ---- Images and alt text ---- */
+.seo-pilot-thumb{display:block;max-width:80px;height:auto;margin-bottom:4px;border:1px solid #dcdcde;background:#f6f7f7}
+.seo-pilot-imgtable td{vertical-align:top}
+.seo-pilot-images .seo-pilot-evidence{margin:4px 0 0}
+/* ---- Fix assistant ---- */
+.seo-pilot-fixgroup{border:1px solid #dcdcde;border-radius:6px;margin:10px 0;padding:6px 14px}
+.seo-pilot-fixgroup legend{padding:0 6px}
+.seo-pilot-fixtable td{vertical-align:top}.seo-pilot-fixtable th:first-child,.seo-pilot-fixtable td:first-child{width:56px;text-align:center}
+.seo-pilot-fixes h3{margin-top:18px}
