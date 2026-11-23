@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace SiteOwnerSEO\Admin;
 
+use SiteOwnerSEO\Checks\CanonicalCheck;
 use SiteOwnerSEO\Checks\MetaDescriptionCheck;
 use SiteOwnerSEO\Checks\TitleCheck;
 
@@ -33,8 +34,9 @@ final class DashboardPage {
 			);
 		}
 
-		$meta   = MetaDescriptionCheck::run();
-		$titles = TitleCheck::run();
+		$meta      = MetaDescriptionCheck::run();
+		$titles    = TitleCheck::run();
+		$canonical = CanonicalCheck::run();
 		?>
 		<div class="wrap sos-wrap">
 			<h1><?php esc_html_e( 'SEO Insights', 'site-owner-seo' ); ?></h1>
@@ -62,6 +64,11 @@ final class DashboardPage {
 			<div class="sos-card">
 				<h2><?php esc_html_e( 'Page titles', 'site-owner-seo' ); ?></h2>
 				<?php $this->render_titles( $titles ); ?>
+			</div>
+
+			<div class="sos-card">
+				<h2><?php esc_html_e( 'Canonical addresses', 'site-owner-seo' ); ?></h2>
+				<?php $this->render_canonical( $canonical ); ?>
 			</div>
 		</div>
 		<?php
@@ -160,6 +167,17 @@ final class DashboardPage {
 			)
 		);
 
+		$this->render_problem_list( $by_page, __( 'Edit title', 'site-owner-seo' ) );
+	}
+
+	/**
+	 * Prints up to ten pages with their problems and a link to the SEO Management form.
+	 *
+	 * @param array<int,string[]> $by_page   Page ID => problem labels.
+	 * @param string              $link_text Text of the link.
+	 * @return void
+	 */
+	private function render_problem_list( array $by_page, string $link_text ): void {
 		echo '<ul class="sos-list">';
 		foreach ( array_slice( $by_page, 0, 10, true ) as $post_id => $problems ) {
 			$title = get_the_title( $post_id );
@@ -175,9 +193,56 @@ final class DashboardPage {
 				esc_html( '' !== $title ? $title : __( '(no title)', 'site-owner-seo' ) ),
 				esc_html( implode( ', ', $problems ) ),
 				esc_url( $url ),
-				esc_html__( 'Edit title', 'site-owner-seo' )
+				esc_html( $link_text )
 			);
 		}
 		echo '</ul>';
+	}
+
+	/**
+	 * Prints the result of the canonical check.
+	 *
+	 * @param array{total:int,custom:int,problems:array<string,int[]>} $result Result of CanonicalCheck::run().
+	 * @return void
+	 */
+	private function render_canonical( array $result ): void {
+		if ( 0 === $result['total'] ) {
+			echo '<p>' . esc_html__( 'No published pages or posts were found.', 'site-owner-seo' ) . '</p>';
+			return;
+		}
+
+		$labels = array(
+			'invalid'      => __( 'Not a full web address', 'site-owner-seo' ),
+			'other_domain' => __( 'Points to another website', 'site-owner-seo' ),
+			'insecure'     => __( 'Uses http instead of https', 'site-owner-seo' ),
+			'other_page'   => __( 'Points to a different page', 'site-owner-seo' ),
+		);
+
+		$by_page = array();
+		foreach ( $result['problems'] as $kind => $ids ) {
+			foreach ( $ids as $post_id ) {
+				$by_page[ $post_id ][] = $labels[ $kind ];
+			}
+		}
+
+		if ( ! $by_page ) {
+			echo '<p class="sos-ok">' . esc_html__( 'No canonical problems found.', 'site-owner-seo' ) . '</p>';
+		} else {
+			printf(
+				'<p class="sos-number"><strong>%1$s</strong> %2$s</p>',
+				esc_html( number_format_i18n( count( $by_page ) ) ),
+				esc_html__( 'pages have a canonical address worth a look. If it is on purpose, you can leave it.', 'site-owner-seo' )
+			);
+			$this->render_problem_list( $by_page, __( 'Edit canonical', 'site-owner-seo' ) );
+		}
+
+		echo '<p class="description">' . esc_html(
+			sprintf(
+				/* translators: 1: pages with their own canonical, 2: total published pages and posts */
+				__( '%1$s of %2$s pages have their own canonical address. The others use the default one from WordPress.', 'site-owner-seo' ),
+				number_format_i18n( $result['custom'] ),
+				number_format_i18n( $result['total'] )
+			)
+		) . '</p>';
 	}
 }
