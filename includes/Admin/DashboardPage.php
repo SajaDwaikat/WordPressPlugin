@@ -1,6 +1,6 @@
 <?php
 /**
- * SEO Insights Dashboard (shell).
+ * SEO Insights Dashboard.
  *
  * @package SiteOwnerSEO
  */
@@ -11,12 +11,13 @@ namespace SiteOwnerSEO\Admin;
 
 use SiteOwnerSEO\Checks\CanonicalCheck;
 use SiteOwnerSEO\Checks\MetaDescriptionCheck;
+use SiteOwnerSEO\Checks\Score;
 use SiteOwnerSEO\Checks\TitleCheck;
 
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Placeholder for the dashboard; the score, page speed and top 5 issues arrive in milestones M3 to M5.
+ * The dashboard: SEO score, top issues and one card per check. Page speed arrives in a later milestone.
  */
 final class DashboardPage {
 
@@ -37,23 +38,13 @@ final class DashboardPage {
 		$meta      = MetaDescriptionCheck::run();
 		$titles    = TitleCheck::run();
 		$canonical = CanonicalCheck::run();
+		$summary   = Score::compute( $meta, $titles, $canonical );
 		?>
 		<div class="wrap sos-wrap">
 			<h1><?php esc_html_e( 'SEO Insights', 'site-owner-seo' ); ?></h1>
 			<div class="sos-card">
-				<h2><?php esc_html_e( 'Your SEO health check will appear here', 'site-owner-seo' ); ?></h2>
-				<p><?php esc_html_e( 'This page will show your overall SEO score, your page speed, and the five most important problems to fix first.', 'site-owner-seo' ); ?></p>
-				<p class="description">
-					<?php
-					echo esc_html(
-						sprintf(
-							/* translators: %s: plugin version number */
-							__( 'Early build, version %s. The checks are not switched on yet.', 'site-owner-seo' ),
-							SOS_VERSION
-						)
-					);
-					?>
-				</p>
+				<h2><?php esc_html_e( 'Your SEO score', 'site-owner-seo' ); ?></h2>
+				<?php $this->render_score( $summary ); ?>
 			</div>
 
 			<div class="sos-card">
@@ -244,5 +235,73 @@ final class DashboardPage {
 				number_format_i18n( $result['total'] )
 			)
 		) . '</p>';
+	}
+
+	/**
+	 * Wording for each issue the score can list.
+	 *
+	 * @return array<string,string>
+	 */
+	private static function issue_labels(): array {
+		return array(
+			'meta_missing'           => __( 'Pages with no meta description', 'site-owner-seo' ),
+			'title_missing'          => __( 'Pages with no title', 'site-owner-seo' ),
+			'title_too_short'        => __( 'Pages with a title that is too short', 'site-owner-seo' ),
+			'title_too_long'         => __( 'Pages with a title that is too long', 'site-owner-seo' ),
+			'title_duplicate'        => __( 'Pages that share a title with another page', 'site-owner-seo' ),
+			'canonical_invalid'      => __( 'Pages whose canonical is not a full web address', 'site-owner-seo' ),
+			'canonical_other_domain' => __( 'Pages whose canonical points to another website', 'site-owner-seo' ),
+			'canonical_insecure'     => __( 'Pages whose canonical uses http instead of https', 'site-owner-seo' ),
+			'canonical_other_page'   => __( 'Pages whose canonical points to a different page', 'site-owner-seo' ),
+		);
+	}
+
+	/**
+	 * Prints the score and the issues to fix first.
+	 *
+	 * @param array{score:?int,issues:array<int,array{key:string,count:int,post_ids:int[]}>} $summary Result of Score::compute().
+	 * @return void
+	 */
+	private function render_score( array $summary ): void {
+		if ( null === $summary['score'] ) {
+			echo '<p>' . esc_html__( 'No published pages or posts were found, so there is nothing to score yet.', 'site-owner-seo' ) . '</p>';
+			return;
+		}
+
+		$score = $summary['score'];
+		$band  = $score >= 80 ? 'good' : ( $score >= 50 ? 'fair' : 'poor' );
+
+		printf(
+			'<p class="sos-score sos-score--%1$s"><strong>%2$s</strong> <span>/ 100</span></p>',
+			esc_attr( $band ),
+			esc_html( number_format_i18n( $score ) )
+		);
+
+		if ( ! $summary['issues'] ) {
+			echo '<p class="sos-ok">' . esc_html__( 'No problems found. Your pages pass every check.', 'site-owner-seo' ) . '</p>';
+		} else {
+			echo '<h3>' . esc_html__( 'Fix these first', 'site-owner-seo' ) . '</h3>';
+			echo '<ol class="sos-top-issues">';
+			$labels = self::issue_labels();
+			foreach ( $summary['issues'] as $issue ) {
+				$url = add_query_arg(
+					array(
+						'page'    => Menu::FORM_SLUG,
+						'post_id' => $issue['post_ids'][0],
+					),
+					admin_url( 'admin.php' )
+				);
+				printf(
+					'<li><span>%1$s <strong>(%2$s)</strong></span> <a href="%3$s">%4$s</a></li>',
+					esc_html( $labels[ $issue['key'] ] ?? $issue['key'] ),
+					esc_html( number_format_i18n( $issue['count'] ) ),
+					esc_url( $url ),
+					esc_html__( 'Fix the first one', 'site-owner-seo' )
+				);
+			}
+			echo '</ol>';
+		}
+
+		echo '<p class="description">' . esc_html__( 'The score is the share of checks your pages pass: a description, a good title and a sound canonical address for every published page. Page speed will be added later.', 'site-owner-seo' ) . '</p>';
 	}
 }

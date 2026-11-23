@@ -43,3 +43,40 @@
 	padding-block: 6px;
 	border-block-end: 1px solid #f0f0f1;
 }
+
+.sos-score {
+	margin-block: 8px;
+}
+
+.sos-score strong {
+	font-size: 56px;
+	line-height: 1;
+}
+
+.sos-score span {
+	font-size: 18px;
+	color: #50575e;
+}
+
+.sos-score--good strong {
+	color: #1a7f37;
+}
+
+.sos-score--fair strong {
+	color: #b45f06;
+}
+
+.sos-score--poor strong {
+	color: #b32d2e;
+}
+
+.sos-top-issues {
+	margin-inline-start: 20px;
+}
+
+.sos-top-issues li {
+	display: flex;
+	gap: 12px;
+	justify-content: space-between;
+	padding-block: 6px;
+}
