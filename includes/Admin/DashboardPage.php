@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace SiteOwnerSEO\Admin;
 
 use SiteOwnerSEO\Checks\MetaDescriptionCheck;
+use SiteOwnerSEO\Checks\TitleCheck;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -32,7 +33,8 @@ final class DashboardPage {
 			);
 		}
 
-		$meta = MetaDescriptionCheck::run();
+		$meta   = MetaDescriptionCheck::run();
+		$titles = TitleCheck::run();
 		?>
 		<div class="wrap sos-wrap">
 			<h1><?php esc_html_e( 'SEO Insights', 'site-owner-seo' ); ?></h1>
@@ -55,6 +57,11 @@ final class DashboardPage {
 			<div class="sos-card">
 				<h2><?php esc_html_e( 'Meta descriptions', 'site-owner-seo' ); ?></h2>
 				<?php $this->render_meta_description( $meta ); ?>
+			</div>
+
+			<div class="sos-card">
+				<h2><?php esc_html_e( 'Page titles', 'site-owner-seo' ); ?></h2>
+				<?php $this->render_titles( $titles ); ?>
 			</div>
 		</div>
 		<?php
@@ -104,6 +111,71 @@ final class DashboardPage {
 				esc_html( '' !== $title ? $title : __( '(no title)', 'site-owner-seo' ) ),
 				esc_url( $url ),
 				esc_html__( 'Add description', 'site-owner-seo' )
+			);
+		}
+		echo '</ul>';
+	}
+
+	/**
+	 * Prints the result of the page title check.
+	 *
+	 * @param array{total:int,problems:array<string,int[]>} $result Result of TitleCheck::run().
+	 * @return void
+	 */
+	private function render_titles( array $result ): void {
+		if ( 0 === $result['total'] ) {
+			echo '<p>' . esc_html__( 'No published pages or posts were found.', 'site-owner-seo' ) . '</p>';
+			return;
+		}
+
+		$labels = array(
+			'missing'   => __( 'No title', 'site-owner-seo' ),
+			'too_short' => __( 'Too short', 'site-owner-seo' ),
+			'too_long'  => __( 'Too long', 'site-owner-seo' ),
+			'duplicate' => __( 'Same title as another page', 'site-owner-seo' ),
+		);
+
+		// Group the problems by page, so a page with two problems is listed once.
+		$by_page = array();
+		foreach ( $result['problems'] as $kind => $ids ) {
+			foreach ( $ids as $post_id ) {
+				$by_page[ $post_id ][] = $labels[ $kind ];
+			}
+		}
+
+		if ( ! $by_page ) {
+			echo '<p class="sos-ok">' . esc_html__( 'All your published pages have a good title.', 'site-owner-seo' ) . '</p>';
+			return;
+		}
+
+		printf(
+			'<p class="sos-number"><strong>%1$s</strong> %2$s</p>',
+			esc_html( number_format_i18n( count( $by_page ) ) ),
+			esc_html(
+				sprintf(
+					/* translators: %s: total number of published pages and posts */
+					__( 'of %s published pages need a better title.', 'site-owner-seo' ),
+					number_format_i18n( $result['total'] )
+				)
+			)
+		);
+
+		echo '<ul class="sos-list">';
+		foreach ( array_slice( $by_page, 0, 10, true ) as $post_id => $problems ) {
+			$title = get_the_title( $post_id );
+			$url   = add_query_arg(
+				array(
+					'page'    => Menu::FORM_SLUG,
+					'post_id' => $post_id,
+				),
+				admin_url( 'admin.php' )
+			);
+			printf(
+				'<li><span dir="auto">%1$s</span> <span class="description">%2$s</span> <a href="%3$s">%4$s</a></li>',
+				esc_html( '' !== $title ? $title : __( '(no title)', 'site-owner-seo' ) ),
+				esc_html( implode( ', ', $problems ) ),
+				esc_url( $url ),
+				esc_html__( 'Edit title', 'site-owner-seo' )
 			);
 		}
 		echo '</ul>';
