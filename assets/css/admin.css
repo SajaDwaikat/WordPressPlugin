@@ -25,3 +25,21 @@
 	font-weight: 600;
 	margin-block: 4px;
 }
+
+.sos-number strong {
+	font-size: 28px;
+	margin-inline-end: 4px;
+}
+
+.sos-ok {
+	color: #1a7f37;
+	font-weight: 600;
+}
+
+.sos-list li {
+	display: flex;
+	gap: 12px;
+	justify-content: space-between;
+	padding-block: 6px;
+	border-block-end: 1px solid #f0f0f1;
+}
