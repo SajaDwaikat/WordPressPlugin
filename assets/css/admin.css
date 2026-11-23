@@ -1,0 +1,27 @@
+/*
+ * Site Owner SEO admin styles.
+ * Written with logical properties (inline-start / inline-end) so the layout
+ * mirrors correctly for right-to-left languages such as Arabic.
+ */
+.sos-wrap {
+	max-inline-size: 960px;
+}
+
+.sos-card {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding-block: 8px;
+	padding-inline: 20px;
+	margin-block-start: 16px;
+}
+
+.sos-card h2 {
+	margin-block-start: 12px;
+}
+
+.sos-error {
+	color: #b32d2e;
+	font-weight: 600;
+	margin-block: 4px;
+}

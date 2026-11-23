@@ -1,26 +1,65 @@
 <?php
 /**
  * Runs when the plugin is deleted from the Plugins screen.
- * Data is kept unless the administrator opted in to deletion under SEO Pilot → Settings.
+ *
+ * SEO data is removed only if the owner ticked "Delete all SEO data when this
+ * plugin is uninstalled" in the settings (decision D6, NF-11).
+ *
+ * @package SiteOwnerSEO
  */
-if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) { exit; }
 
-global $wpdb;
-$settings = get_option( 'seo_pilot_settings', array() );
+if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
+	exit;
+}
 
-// Always safe to remove: short-lived caches.
-delete_transient( 'seo_pilot_rl' );
-$seo_pilot_like_t = $wpdb->esc_like( '_transient_seo_pilot_' ) . '%';
-$seo_pilot_like_o = $wpdb->esc_like( '_transient_timeout_seo_pilot_' ) . '%';
-$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $seo_pilot_like_t, $seo_pilot_like_o ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+/**
+ * Removes this plugin's data from the current site, if the owner opted in.
+ *
+ * @return void
+ */
+function sos_uninstall_current_site() {
+	global $wpdb;
 
-if ( is_array( $settings ) && ! empty( $settings['delete_on_uninstall'] ) ) {
-    $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}seo_pilot_recs" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-    $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}seo_pilot_searchdata" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-    $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}seo_pilot_history" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-    // Includes the SEO titles / meta descriptions SEO Pilot itself stored (_seo_pilot_seo_title, _seo_pilot_meta_description).
-    $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s", $wpdb->esc_like( '_seo_pilot_' ) . '%' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-    foreach ( array( 'seo_pilot_settings', 'seo_pilot_secret', 'seo_pilot_db_version', 'seo_pilot_migrated_020', 'seo_pilot_last_audit', 'seo_pilot_imports' ) as $option ) {
-        delete_option( $option );
-    }
+	$settings = get_option( 'sos_settings' );
+	if ( ! is_array( $settings ) || empty( $settings['delete_on_uninstall'] ) ) {
+		return;
+	}
+
+	delete_option( 'sos_settings' );
+	delete_option( 'sos_db_version' );
+	delete_option( 'sos_home_seo' );
+	delete_option( 'sos_scan_state' );
+	delete_transient( 'sos_psi_mobile' );
+	delete_transient( 'sos_psi_desktop' );
+	wp_clear_scheduled_hook( 'sos_daily_scan' );
+
+	// Saved SEO values per page (_sos_title, _sos_description, ...).
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+	$wpdb->query(
+		$wpdb->prepare(
+			"DELETE FROM {$wpdb->postmeta} WHERE meta_key LIKE %s",
+			$wpdb->esc_like( '_sos_' ) . '%'
+		)
+	);
+
+	// Scan results table (created in a later milestone).
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}sos_scan_results" );
+}
+
+if ( is_multisite() ) {
+	// Each site decides for itself through its own setting.
+	$sos_site_ids = get_sites(
+		array(
+			'fields' => 'ids',
+			'number' => 0,
+		)
+	);
+	foreach ( $sos_site_ids as $sos_site_id ) {
+		switch_to_blog( (int) $sos_site_id );
+		sos_uninstall_current_site();
+		restore_current_blog();
+	}
+} else {
+	sos_uninstall_current_site();
 }
