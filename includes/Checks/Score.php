@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Combines the results of the three page checks. Pure PHP, so it can be unit tested without WordPress.
  *
- * Every published page is tested three times: has a description, has a good title, has a sound canonical.
+ * Every published page is tested three times: has a good description, has a good title, has a sound canonical.
  * The score is the share of those tests that pass, from 0 to 100. All three count the same.
  */
 final class Score {
@@ -31,7 +31,9 @@ final class Score {
 		'canonical_other_domain',
 		'canonical_insecure',
 		'title_duplicate',
+		'meta_too_long',
 		'title_too_long',
+		'meta_too_short',
 		'title_too_short',
 		'canonical_other_page',
 	);
@@ -47,9 +49,10 @@ final class Score {
 	public static function compute( array $meta, array $titles, array $canonical ): array {
 		$total = (int) $titles['total'];
 
-		$issues = array(
-			'meta_missing' => array_map( 'intval', $meta['missing_ids'] ),
-		);
+		$issues = array();
+		foreach ( $meta['problems'] as $kind => $ids ) {
+			$issues[ 'meta_' . $kind ] = array_map( 'intval', $ids );
+		}
 		foreach ( $titles['problems'] as $kind => $ids ) {
 			$issues[ 'title_' . $kind ] = array_map( 'intval', $ids );
 		}
@@ -57,8 +60,8 @@ final class Score {
 			$issues[ 'canonical_' . $kind ] = array_map( 'intval', $ids );
 		}
 
-		// A page that has two title problems still fails the title test only once.
-		$failed = count( $issues['meta_missing'] )
+		// A page that has two problems in one check still fails that check only once.
+		$failed = count( self::union( $meta['problems'] ) )
 			+ count( self::union( $titles['problems'] ) )
 			+ count( self::union( $canonical['problems'] ) );
 

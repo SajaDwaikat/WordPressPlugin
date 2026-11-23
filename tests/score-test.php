@@ -9,8 +9,8 @@ require __DIR__ . '/../includes/Checks/Score.php';
 
 use SiteOwnerSEO\Checks\Score;
 
-function t_meta( array $missing ): array {
-	return array( 'total' => 0, 'missing' => count( $missing ), 'missing_ids' => $missing );
+function t_meta( array $missing, array $other = array() ): array {
+	return array( 'total' => 0, 'problems' => $other + array( 'missing' => $missing, 'too_short' => array(), 'too_long' => array() ) );
 }
 function t_titles( int $total, array $p = array() ): array {
 	return array( 'total' => $total, 'problems' => $p + array( 'missing' => array(), 'too_short' => array(), 'too_long' => array(), 'duplicate' => array() ) );
@@ -45,5 +45,11 @@ check( 'tie broken by severity (title_too_long before canonical_other_page)', 't
 
 $r = Score::compute( t_meta( array() ), t_titles( 10, array( 'missing' => array( 1 ), 'too_short' => array( 2, 3 ), 'too_long' => array( 4, 5, 6 ), 'duplicate' => array( 7, 8 ) ) ), t_canon( array( 'invalid' => array( 9 ), 'other_page' => array( 10 ) ) ) );
 check( 'only the top 5 issues are kept', 5 === count( $r['issues'] ) && 'title_too_long' === $r['issues'][0]['key'] );
+
+$r = Score::compute( t_meta( array(), array( 'too_short' => array( 1 ), 'too_long' => array( 1 ) ) ), t_titles( 5 ), t_canon() );
+check( 'one page with a short and a long description fails once: 14 of 15 = 93', 93 === $r['score'] && 2 === count( $r['issues'] ) );
+
+$r = Score::compute( t_meta( array(), array( 'too_short' => array( 1 ) ) ), t_titles( 5, array( 'too_short' => array( 2 ) ) ), t_canon() );
+check( 'tie: meta_too_short ranks before title_too_short', 'meta_too_short' === $r['issues'][0]['key'] && 'title_too_short' === $r['issues'][1]['key'] );
 
 exit( $failed ? 1 : 0 );

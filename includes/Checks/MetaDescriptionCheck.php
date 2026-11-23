@@ -1,6 +1,6 @@
 <?php
 /**
- * Dashboard check M1: published pages without a meta description.
+ * Dashboard check: meta descriptions that are missing, too short or too long.
  *
  * @package SiteOwnerSEO
  */
@@ -14,8 +14,8 @@ use SiteOwnerSEO\SeoFields;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Counts live pages and posts whose meta description is empty.
- * Only the description saved by this plugin is read, so the result is a real count, never an estimate.
+ * Looks at the description saved by this plugin for every live page and post.
+ * The length limits are common SEO advice, not hard rules, so they are easy to change here.
  */
 final class MetaDescriptionCheck {
 
@@ -23,6 +23,9 @@ final class MetaDescriptionCheck {
 	 * Content types covered by the SEO Management form.
 	 */
 	public const POST_TYPES = array( 'page', 'post' );
+
+	public const MIN_LENGTH = 70;
+	public const MAX_LENGTH = 160;
 
 	/**
 	 * Whether a saved description counts as missing (empty or only spaces).
@@ -36,9 +39,32 @@ final class MetaDescriptionCheck {
 	}
 
 	/**
+	 * Judges one description on its own. Pure PHP.
+	 *
+	 * @param string $description Saved description.
+	 * @return string One of: missing, too_short, too_long, ok.
+	 */
+	public static function classify( string $description ): string {
+		if ( self::is_missing( $description ) ) {
+			return 'missing';
+		}
+
+		// Count characters, not bytes, so Arabic text is measured fairly.
+		$length = mb_strlen( trim( $description ) );
+		if ( $length < self::MIN_LENGTH ) {
+			return 'too_short';
+		}
+		if ( $length > self::MAX_LENGTH ) {
+			return 'too_long';
+		}
+		return 'ok';
+	}
+
+	/**
 	 * Runs the check on all published pages and posts.
 	 *
-	 * @return array{total:int,missing:int,missing_ids:int[]} Totals and the IDs without a description.
+	 * @return array{total:int,problems:array<string,int[]>} Total pages, and the page IDs for each problem
+	 *                                                      (missing, too_short, too_long).
 	 */
 	public static function run(): array {
 		$ids = get_posts(
@@ -53,18 +79,23 @@ final class MetaDescriptionCheck {
 			)
 		);
 
-		$missing = array();
+		$problems = array(
+			'missing'   => array(),
+			'too_short' => array(),
+			'too_long'  => array(),
+		);
+
 		foreach ( $ids as $id ) {
-			$description = (string) get_post_meta( (int) $id, SeoFields::META_DESCRIPTION, true );
-			if ( self::is_missing( $description ) ) {
-				$missing[] = (int) $id;
+			$id   = (int) $id;
+			$kind = self::classify( (string) get_post_meta( $id, SeoFields::META_DESCRIPTION, true ) );
+			if ( 'ok' !== $kind ) {
+				$problems[ $kind ][] = $id;
 			}
 		}
 
 		return array(
-			'total'       => count( $ids ),
-			'missing'     => count( $missing ),
-			'missing_ids' => $missing,
+			'total'    => count( $ids ),
+			'problems' => $problems,
 		);
 	}
 }

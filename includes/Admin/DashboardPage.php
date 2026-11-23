@@ -68,7 +68,7 @@ final class DashboardPage {
 	/**
 	 * Prints the result of the meta description check.
 	 *
-	 * @param array{total:int,missing:int,missing_ids:int[]} $meta Result of MetaDescriptionCheck::run().
+	 * @param array{total:int,problems:array<string,int[]>} $meta Result of MetaDescriptionCheck::run().
 	 * @return void
 	 */
 	private function render_meta_description( array $meta ): void {
@@ -77,41 +77,37 @@ final class DashboardPage {
 			return;
 		}
 
-		if ( 0 === $meta['missing'] ) {
-			echo '<p class="sos-ok">' . esc_html__( 'All your published pages have a meta description.', 'site-owner-seo' ) . '</p>';
+		$labels = array(
+			'missing'   => __( 'No description', 'site-owner-seo' ),
+			'too_short' => __( 'Too short', 'site-owner-seo' ),
+			'too_long'  => __( 'Too long', 'site-owner-seo' ),
+		);
+
+		$by_page = array();
+		foreach ( $meta['problems'] as $kind => $ids ) {
+			foreach ( $ids as $post_id ) {
+				$by_page[ $post_id ][] = $labels[ $kind ];
+			}
+		}
+
+		if ( ! $by_page ) {
+			echo '<p class="sos-ok">' . esc_html__( 'All your published pages have a good meta description.', 'site-owner-seo' ) . '</p>';
 			return;
 		}
 
 		printf(
 			'<p class="sos-number"><strong>%1$s</strong> %2$s</p>',
-			esc_html( number_format_i18n( $meta['missing'] ) ),
+			esc_html( number_format_i18n( count( $by_page ) ) ),
 			esc_html(
 				sprintf(
 					/* translators: %s: total number of published pages and posts */
-					__( 'of %s published pages have no meta description.', 'site-owner-seo' ),
+					__( 'of %s published pages need a better meta description.', 'site-owner-seo' ),
 					number_format_i18n( $meta['total'] )
 				)
 			)
 		);
 
-		echo '<ul class="sos-list">';
-		foreach ( array_slice( $meta['missing_ids'], 0, 10 ) as $post_id ) {
-			$title = get_the_title( $post_id );
-			$url   = add_query_arg(
-				array(
-					'page'    => Menu::FORM_SLUG,
-					'post_id' => $post_id,
-				),
-				admin_url( 'admin.php' )
-			);
-			printf(
-				'<li><span dir="auto">%1$s</span> <a href="%2$s">%3$s</a></li>',
-				esc_html( '' !== $title ? $title : __( '(no title)', 'site-owner-seo' ) ),
-				esc_url( $url ),
-				esc_html__( 'Add description', 'site-owner-seo' )
-			);
-		}
-		echo '</ul>';
+		$this->render_problem_list( $by_page, __( 'Edit description', 'site-owner-seo' ) );
 	}
 
 	/**
@@ -245,6 +241,8 @@ final class DashboardPage {
 	private static function issue_labels(): array {
 		return array(
 			'meta_missing'           => __( 'Pages with no meta description', 'site-owner-seo' ),
+			'meta_too_short'         => __( 'Pages with a meta description that is too short', 'site-owner-seo' ),
+			'meta_too_long'          => __( 'Pages with a meta description that is too long', 'site-owner-seo' ),
 			'title_missing'          => __( 'Pages with no title', 'site-owner-seo' ),
 			'title_too_short'        => __( 'Pages with a title that is too short', 'site-owner-seo' ),
 			'title_too_long'         => __( 'Pages with a title that is too long', 'site-owner-seo' ),
@@ -302,6 +300,6 @@ final class DashboardPage {
 			echo '</ol>';
 		}
 
-		echo '<p class="description">' . esc_html__( 'The score is the share of checks your pages pass: a description, a good title and a sound canonical address for every published page. Page speed will be added later.', 'site-owner-seo' ) . '</p>';
+		echo '<p class="description">' . esc_html__( 'The score is the share of checks your pages pass: a good description, a good title and a sound canonical address for every published page. Page speed will be added later.', 'site-owner-seo' ) . '</p>';
 	}
 }

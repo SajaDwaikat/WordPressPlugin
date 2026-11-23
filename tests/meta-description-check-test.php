@@ -19,9 +19,17 @@ $cases = array(
 	'text with spaces'   => array( '  hello  ', false ),
 );
 
+$cases['classify empty']       = array( Check::classify( '' ), 'missing' );
+$cases['classify 69 chars']    = array( Check::classify( str_repeat( 'a', 69 ) ), 'too_short' );
+$cases['classify 70 chars']    = array( Check::classify( str_repeat( 'a', 70 ) ), 'ok' );
+$cases['classify 160 chars']   = array( Check::classify( str_repeat( 'a', 160 ) ), 'ok' );
+$cases['classify 161 chars']   = array( Check::classify( str_repeat( 'a', 161 ) ), 'too_long' );
+$cases['classify arabic ok']   = array( Check::classify( str_repeat( 'ع', 100 ) ), 'ok' );
+$cases['classify trims']       = array( Check::classify( '  ' . str_repeat( 'a', 69 ) . '  ' ), 'too_short' );
+
 $failed = 0;
 foreach ( $cases as $name => $case ) {
-	$ok = Check::is_missing( $case[0] ) === $case[1];
+	$ok = ( is_bool( $case[1] ) ? Check::is_missing( $case[0] ) : $case[0] ) === $case[1];
 	echo ( $ok ? 'PASS ' : 'FAIL ' ) . $name . "\n";
 	$failed += $ok ? 0 : 1;
 }
