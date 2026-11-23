@@ -38,6 +38,8 @@ final class Plugin {
 			( new Admin\SettingsPage() )->register();
 			( new Admin\FormPage() )->register();
 			add_filter( 'plugin_action_links_' . plugin_basename( SOS_FILE ), array( self::class, 'action_links' ) );
+		} else {
+			( new Frontend\HeadOutput() )->register();
 		}
 	}
 
