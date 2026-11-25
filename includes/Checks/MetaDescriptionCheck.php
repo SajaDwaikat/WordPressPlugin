@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace SiteOwnerSEO\Checks;
 
+use SiteOwnerSEO\PostTypes;
 use SiteOwnerSEO\SeoFields;
 
 defined( 'ABSPATH' ) || exit;
@@ -18,11 +19,6 @@ defined( 'ABSPATH' ) || exit;
  * The length limits are common SEO advice, not hard rules, so they are easy to change here.
  */
 final class MetaDescriptionCheck {
-
-	/**
-	 * Content types covered by the SEO Management form.
-	 */
-	public const POST_TYPES = array( 'page', 'post' );
 
 	public const MIN_LENGTH = 70;
 	public const MAX_LENGTH = 160;
@@ -69,7 +65,7 @@ final class MetaDescriptionCheck {
 	public static function run(): array {
 		$ids = get_posts(
 			array(
-				'post_type'      => self::POST_TYPES,
+				'post_type'      => PostTypes::supported(),
 				'post_status'    => 'publish',
 				'fields'         => 'ids',
 				'posts_per_page' => -1,

@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace SiteOwnerSEO\Admin;
 
+use SiteOwnerSEO\PostTypes;
 use SiteOwnerSEO\SeoFields;
 
 defined( 'ABSPATH' ) || exit;
@@ -36,7 +37,7 @@ final class FormPage {
 	 * @return string[]
 	 */
 	private static function post_types(): array {
-		return array( 'page', 'post' );
+		return PostTypes::supported();
 	}
 
 	/**
@@ -307,7 +308,13 @@ final class FormPage {
 				<select id="sos-post-id" name="post_id">
 					<option value="0"><?php esc_html_e( 'Select a page…', 'site-owner-seo' ); ?></option>
 					<?php foreach ( $choices as $choice ) : ?>
-						<?php $label = '' !== trim( $choice->post_title ) ? $choice->post_title : __( '(no title)', 'site-owner-seo' ); ?>
+						<?php
+						$label = '' !== trim( $choice->post_title ) ? $choice->post_title : __( '(no title)', 'site-owner-seo' );
+						$type  = get_post_type_object( $choice->post_type );
+						if ( $type && ! in_array( $choice->post_type, array( 'page', 'post' ), true ) ) {
+							$label .= ' (' . $type->labels->singular_name . ')';
+						}
+						?>
 						<option value="<?php echo esc_attr( (string) $choice->ID ); ?>" <?php selected( $selected, $choice->ID ); ?>>
 							<?php echo esc_html( $label ); ?>
 						</option>

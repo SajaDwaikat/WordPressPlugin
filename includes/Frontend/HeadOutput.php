@@ -9,7 +9,7 @@ declare( strict_types=1 );
 
 namespace SiteOwnerSEO\Frontend;
 
-use SiteOwnerSEO\Checks\MetaDescriptionCheck;
+use SiteOwnerSEO\PostTypes;
 use SiteOwnerSEO\SeoFields;
 
 defined( 'ABSPATH' ) || exit;
@@ -39,12 +39,12 @@ final class HeadOutput {
 	 */
 	private function current_post_id(): int {
 		$is_posts_page = is_home() && ! is_front_page() && (int) get_option( 'page_for_posts' ) > 0;
-		if ( ! is_singular( MetaDescriptionCheck::POST_TYPES ) && ! $is_posts_page ) {
+		if ( ! is_singular( PostTypes::supported() ) && ! $is_posts_page ) {
 			return 0;
 		}
 
 		$id = (int) get_queried_object_id();
-		return in_array( get_post_type( $id ), MetaDescriptionCheck::POST_TYPES, true ) ? $id : 0;
+		return in_array( get_post_type( $id ), PostTypes::supported(), true ) ? $id : 0;
 	}
 
 	/**
@@ -78,7 +78,7 @@ final class HeadOutput {
 	 * @return string|false
 	 */
 	public function filter_canonical( $url, $post ) {
-		if ( ! $url || ! $post instanceof \WP_Post || ! in_array( $post->post_type, MetaDescriptionCheck::POST_TYPES, true ) ) {
+		if ( ! $url || ! $post instanceof \WP_Post || ! in_array( $post->post_type, PostTypes::supported(), true ) ) {
 			return $url;
 		}
 

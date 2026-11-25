@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace SiteOwnerSEO\Checks;
 
+use SiteOwnerSEO\PostTypes;
 use SiteOwnerSEO\SeoFields;
 
 defined( 'ABSPATH' ) || exit;
@@ -79,7 +80,7 @@ final class CanonicalCheck {
 	public static function run(): array {
 		$ids = get_posts(
 			array(
-				'post_type'      => MetaDescriptionCheck::POST_TYPES,
+				'post_type'      => PostTypes::supported(),
 				'post_status'    => 'publish',
 				'fields'         => 'ids',
 				'posts_per_page' => -1,
